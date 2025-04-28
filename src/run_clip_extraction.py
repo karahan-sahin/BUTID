@@ -3,6 +3,7 @@ import cv2
 import json
 import pandas as pd
 from tqdm import tqdm
+import threading
 
 def extract_clips(
     video_id,
@@ -179,11 +180,8 @@ if __name__ == "__main__":
         if os.path.exists(os.path.join(args.video_dir, video_id + ".mp4"))
     ]
 
-    import threading
-
     num_workers = args.num_workers
-    video_ids = [video_ids[i::num_workers] for i in range(num_workers)]
-
+    
     if args.annotation_file:
         annotation_df =  pd.read_csv(args.annotation_file)
         annotation_df = annotation_df[annotation_df["video_id"].isin(video_ids)]
@@ -191,6 +189,9 @@ if __name__ == "__main__":
         annotation_df = [
             annotation_df.iloc[i::num_workers] for i in range(num_workers)
         ]
+
+    video_ids = [video_ids[i::num_workers] for i in range(num_workers)]
+
 
     os.makedirs(args.save_dir, exist_ok=True)
 
