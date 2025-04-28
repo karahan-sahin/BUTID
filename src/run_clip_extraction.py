@@ -1,7 +1,74 @@
 import os
 import cv2
 import json
+import pandas as pd
 from tqdm import tqdm
+
+def extract_clips(
+    video_id,
+    video_dir,
+    clip_id,
+    save_dir,
+    start_time,
+    end_time,
+    bbox,
+):
+    
+    video_path = os.path.join(video_dir, video_id + ".mp4")
+    
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video {video_path} not found")
+    
+    # Create the save directory if it doesn't exist
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # Create a VideoCapture object
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    clip_bbox = bbox[video_id]["bbox"]
+    
+    # Calculate the start and end frames
+    start_frame = int(start_time * fps)
+    end_frame = int(end_time * fps)
+    
+    # Set the video capture to the start frame
+    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    # Create a VideoWriter object to save the cropped video
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(
+        os.path.join(save_dir, clip_id + ".mp4"),
+        fourcc,
+        fps,
+        (clip_bbox["bounding_box_x"][1] - clip_bbox["bounding_box_x"][0], clip_bbox["bounding_box_y"][1] - clip_bbox["bounding_box_y"][0]),
+    )
+    
+    # Read and write frames until the end frame is reached
+    progress_bar = tqdm(total=end_frame - start_frame, desc="Extracting clips")
+    while cap.isOpened():
+        current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+        if current_frame > end_frame:
+            break
+
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Crop the frame
+        cropped_frame = frame[
+            clip_bbox["bounding_box_y"][0] : clip_bbox["bounding_box_y"][1],
+            clip_bbox["bounding_box_x"][0] : clip_bbox["bounding_box_x"][1],
+        ]
+
+        # Write the cropped frame to the output video
+        out.write(cropped_frame)
+        progress_bar.update(1)
+        
+    cap.release()
+    out.release()
+    progress_bar.close()
+    
 
 def crop_video(video_id, video_dir, save_dir, bbox):
 
@@ -67,11 +134,23 @@ def run_clip_all_videos(video_ids, video_dir, save_dir, bbox):
     for video_id in tqdm(video_ids, desc="Cropping videos"):
         crop_video(video_id, video_dir, save_dir, bbox)
 
+def run_clip_all_clips(clip_df, video_dir, save_dir, bbox):
+    for _, row in tqdm(clip_df.iterrows(), desc="Cropping clips"):
+        extract_clips(
+            row["video_id"],
+            row["video_dir"],
+            row["clip_id"],
+            row["save_dir"],
+            row["start_in_seconds"],
+            row["end_in_seconds"],
+            row["bbox"],
+        )
 
 def parse_args():
     import argparse
 
     parser = argparse.ArgumentParser(description="Crop all videos in the dataset")
+    parser.add_argument('--annotation_file', type=str, help="Path to the annotation file")
     parser.add_argument("--video_dir", type=str, help="Path to the video directory")
     parser.add_argument("--save_dir", type=str, help="Path to the save directory")
     parser.add_argument("--bbox_file", type=str, help="Path to the bounding box")
@@ -105,12 +184,35 @@ if __name__ == "__main__":
 
     threads = []
     for i in range(num_workers):
-        t = threading.Thread(
-            target=run_clip_all_videos,
-            args=(video_ids[i], args.video_dir, args.save_dir, bbox),
-        )
-        threads.append(t)
-        t.start()
+        if args.annotation_file:
+            annotation_df = pd.read_csv(args.annotation_file)
+            annotation_df = annotation_df[
+                annotation_df["video_id"].isin(video_ids[i])
+            ]
+            clip_chunks = [
+                annotation_df.iloc[i::num_workers]
+                for i in range(num_workers)
+            ]
+            for c in clip_chunks[i]:
+                
+                t = threading.Thread(
+                    target=run_clip_all_clips,
+                    args=(
+                        c,
+                        args.video_dir,
+                        args.save_dir,
+                        bbox,
+                    ),
+                )
+                threads.append(t)
+                t.start()
+        else:
+            t = threading.Thread(
+                target=run_clip_all_videos,
+                args=(video_ids[i], args.video_dir, args.save_dir, bbox),
+            )
+            threads.append(t)
+            t.start()
 
     for t in threads:
         t.join()
