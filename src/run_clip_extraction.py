@@ -135,15 +135,19 @@ def run_clip_all_videos(video_ids, video_dir, save_dir, bbox):
         crop_video(video_id, video_dir, save_dir, bbox)
 
 def run_clip_all_clips(clip_df, video_dir, save_dir, bbox):
+    print('*'* 20)
+    print(clip_df)
+    print('*'* 20)
+    
     for _, row in tqdm(clip_df.iterrows(), desc="Cropping clips"):
         extract_clips(
             row["video_id"],
-            row["video_dir"],
+            video_dir,
             row["clip_id"],
-            row["save_dir"],
+            save_dir,
             row["start_in_seconds"],
             row["end_in_seconds"],
-            row["bbox"],
+            bbox
         )
 
 def parse_args():
@@ -180,32 +184,33 @@ if __name__ == "__main__":
     num_workers = args.num_workers
     video_ids = [video_ids[i::num_workers] for i in range(num_workers)]
 
+    if args.annotation_file:
+        annotation_df =  pd.read_csv(args.annotation_file)
+        annotation_df = annotation_df[annotation_df["video_id"].isin(video_ids)]
+        # Split the dataframe into chunks
+        annotation_df = [
+            annotation_df.iloc[i::num_workers] for i in range(num_workers)
+        ]
+
     os.makedirs(args.save_dir, exist_ok=True)
 
     threads = []
     for i in range(num_workers):
         if args.annotation_file:
-            annotation_df = pd.read_csv(args.annotation_file)
-            annotation_df = annotation_df[
-                annotation_df["video_id"].isin(video_ids[i])
-            ]
-            clip_chunks = [
-                annotation_df.iloc[i::num_workers]
-                for i in range(num_workers)
-            ]
-            for c in clip_chunks[i]:
-                
-                t = threading.Thread(
-                    target=run_clip_all_clips,
-                    args=(
-                        c,
-                        args.video_dir,
-                        args.save_dir,
-                        bbox,
-                    ),
-                )
-                threads.append(t)
-                t.start()
+            # Split the dataframe into chunk with chunk number of rows
+            chunk = annotation_df[i]
+            # Create a thread for each chunk    
+            t = threading.Thread(
+                target=run_clip_all_clips,
+                args=(
+                    chunk,
+                    args.video_dir,
+                    args.save_dir,
+                    bbox,
+                ),
+            )
+            threads.append(t)
+            t.start()
         else:
             t = threading.Thread(
                 target=run_clip_all_videos,
