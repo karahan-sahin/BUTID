@@ -131,11 +131,11 @@ def crop_video(video_id, video_dir, save_dir, bbox):
     progress_bar.close()
 
 
-def run_clip_all_videos(video_ids, video_dir, save_dir, bbox):
+def run_clip_all_videos(video_ids, video_dir, save_dir, bbox, padding):
     for video_id in tqdm(video_ids, desc="Cropping videos"):
         crop_video(video_id, video_dir, save_dir, bbox)
 
-def run_clip_all_clips(clip_df, video_dir, save_dir, bbox):
+def run_clip_all_clips(clip_df, video_dir, save_dir, bbox, padding):
     print('*'* 20)
     print(clip_df)
     print('*'* 20)
@@ -147,7 +147,7 @@ def run_clip_all_clips(clip_df, video_dir, save_dir, bbox):
             row["clip_id"],
             save_dir,
             row["start_in_seconds"],
-            row["end_in_seconds"],
+            row["end_in_seconds"] + padding,
             bbox
         )
 
@@ -159,6 +159,7 @@ def parse_args():
     parser.add_argument("--video_dir", type=str, help="Path to the video directory")
     parser.add_argument("--save_dir", type=str, help="Path to the save directory")
     parser.add_argument("--bbox_file", type=str, help="Path to the bounding box")
+    parser.add_argument('--padding', type=int, default=2, help="Padding to number of seconds")
     parser.add_argument(
         "--num_workers", type=int, default=1, help="Number of workers to use"
     )
@@ -192,7 +193,6 @@ if __name__ == "__main__":
 
     video_ids = [video_ids[i::num_workers] for i in range(num_workers)]
 
-
     os.makedirs(args.save_dir, exist_ok=True)
 
     threads = []
@@ -208,6 +208,7 @@ if __name__ == "__main__":
                     args.video_dir,
                     args.save_dir,
                     bbox,
+                    args.padding,
                 ),
             )
             threads.append(t)
