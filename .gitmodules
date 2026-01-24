@@ -1,9 +1,3 @@
-[submodule "third-party/ssvp_slt"]
-	path = third-party/ssvp_slt
-	url = git@github.com:karahan-sahin/ssvp_slt.git
-[submodule "third-party/Uni-Sign"]
-	path = third-party/Uni-Sign
-	url = git@github.com:karahan-sahin/Uni-Sign.git
 [submodule "third-party/unisign"]
 	path = third-party/unisign
 	url = https://github.com/ZechengLi19/Uni-Sign
