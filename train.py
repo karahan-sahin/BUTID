@@ -1,6 +1,3 @@
-import torch
-from torch.nn.utils.rnn import pad_sequence
-from torch.utils.data import DataLoader
 import wandb
 import os
 import time
@@ -14,17 +11,22 @@ from transformers import get_scheduler
 from src.models import UniSign, UniSignConfig
 from src.models import get_requires_grad_dict
 
+import torch
+from torch.utils.data import DataLoader
+from torch.nn.utils.rnn import pad_sequence
+
 # Add unisign path to system environment
 sys.path.append('third_party/unisign/')
 
-import third_party.unisign.utils as utils
-from third_party.unisign.SLRT_metrics import translation_performance, islr_performance, wer_list
+from src.metrics import bert_score
+from third_party.unisign.SLRT_metrics import translation_performance, islr_performance
 from src.config import (
     model_name_or_path,
     train_label_paths,
     dev_label_paths,
     test_label_paths,
 )
+import third_party.unisign.utils as utils
 
 from src.dataset import BUTIDDataset
 
@@ -52,9 +54,9 @@ def main(args):
     print(train_data)
     print(train_data[10])
 
-    dev_data = BUTIDDataset(path=dev_label_paths[args.dataset], 
-                            args=args, 
-                            phase='dev')
+    dev_data  = BUTIDDataset(path=dev_label_paths[args.dataset], 
+                             args=args, 
+                             phase='dev')
     print(dev_data)
     test_data = BUTIDDataset(path=test_label_paths[args.dataset], 
                              args=args, 
@@ -97,7 +99,7 @@ def main(args):
         hidden_dim = args.hidden_dim,
         mt5_path = model_name_or_path,
         label_smoothing = args.label_smoothing,
-        tgt_lang= 'Turkish',
+        tgt_lang = 'Turkish',
     )
     model = UniSign(config)
     model.cuda()
@@ -134,16 +136,13 @@ def main(args):
     
     model, optimizer, lr_scheduler = utils.init_deepspeed(args, model, optimizer, lr_scheduler)
     model_without_ddp = model.module.module
-    # print(model_without_ddp)
+
     print(optimizer)
 
     output_dir = Path(args.output_dir)
 
     start_time = time.time()
-    max_accuracy = 0
-    if "CSLR" in args.tasks:
-        max_accuracy = 1000
-    
+    max_accuracy = 0    
     if args.eval:
         if utils.is_main_process():
             if "ISLR" not in args.tasks:
@@ -198,19 +197,7 @@ def main(args):
 
                 print(f"PI accuracy of the network on the {len(dev_dataloader)} dev videos: {test_stats['top1_acc_pi']:.2f}")
                 print(f'Max PI accuracy: {max_accuracy:.2f}%')
-            
-            elif args.task == "CSLR":
-                if max_accuracy > test_stats["wer"]:
-                    max_accuracy = test_stats["wer"]
-                    if args.output_dir and utils.is_main_process():
-                        checkpoint_paths = [output_dir / "CSLR" / 'best_checkpoint.pth']
-                        for checkpoint_path in checkpoint_paths:
-                            utils.save_on_master({
-                                'model': get_requires_grad_dict(model_without_ddp),
-                            }, checkpoint_path)
-                            
-                print(f"WER of the network on the {len(dev_dataloader)} dev videos: {test_stats['wer']:.2f}")
-                print(f'Min WER: {max_accuracy:.2f}%')
+
         
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                         **{f'test_{k}': v for k, v in test_stats.items()},
@@ -322,17 +309,20 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
 
     if "SLT" in args.tasks:
         bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
+        bert_scores = bert_score(tgt_pres, tgt_refs, lang='tr')
         for k,v in bleu_dict.items():
             metric_logger.meters[k].update(v)
         metric_logger.meters['rouge'].update(rouge_score)
-
+        metric_logger.meters['bert_score'].update(bert_scores['f1'])
+        
         print(
             f"## SLT results  ##\n"
             f"BLEU-1: {bleu_dict['bleu1']:.2f}%\n"
             f"BLEU-2: {bleu_dict['bleu2']:.2f}%\n"
             f"BLEU-3: {bleu_dict['bleu3']:.2f}%\n"
             f"BLEU-4: {bleu_dict['bleu4']:.2f}%\n"
-            f"ROUGE: {rouge_score:.2f}%"
+            f"ROUGE: {rouge_score:.2f}%\n"
+            f"BERT Score: {bert_scores['f1']:.2f}%\n"
         )
         wandb.log({
             f'{phase}/bleu1': bleu_dict['bleu1'],
@@ -340,6 +330,7 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             f'{phase}/bleu3': bleu_dict['bleu3'],
             f'{phase}/bleu4': bleu_dict['bleu4'],
             f'{phase}/rouge': rouge_score,
+            f'{phase}/bert_score': bert_scores['f1'],
         })
         
     if "ISLR" in args.tasks:
@@ -355,22 +346,6 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             f'{phase}/top1_acc_pi': top1_acc_pi,
             f'{phase}/top1_acc_pc': top1_acc_pc,
         })
-        
-    if "CSLR" in args.tasks:
-        wer_results = wer_list(hypotheses=tgt_pres, references=tgt_refs)
-        print(
-            f"CSLR results\n"
-            f"WER: {wer_results['wer']:.2f}%"
-        )
-        for k,v in wer_results.items():
-            metric_logger.meters[k].update(v)
-            
-        wandb.log({
-            f'{phase}/wer': wer_results['wer'],
-        })
-
-    if "SS" in args.tasks:
-        pass
 
     # # gather the stats from all processes
     # metric_logger.synchronize_between_processes()

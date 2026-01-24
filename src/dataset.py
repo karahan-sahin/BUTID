@@ -350,11 +350,9 @@ class BUTIDDataset(BaseDataset):
 
         self.pose_dir = pose_dirs[self.args.dataset]
             
-        if "BSign22k" in self.args.dataset:
+        if "BSign22k" in self.args.dataset or 'AUTSL' in self.args.dataset:
             self.pose_dir = os.path.join(pose_dirs[self.args.dataset], phase)
 
-
-        # self.list = list(self.raw_data.keys())
         self.list_key, self.list_task = [], []
         self.tasks = args.tasks if isinstance(args.tasks, list) else [args.task]
         for task in self.tasks:
@@ -393,7 +391,7 @@ class BUTIDDataset(BaseDataset):
                 for part in pose.keys():
                     pose[part].append(h5f[f'{frame:04d}'][part][()])
             
-        kps3d = load_part_mp(pose['body'], force_ok=True)
+        kps3d = load_part_mp(pose, force_ok=True)
     
         # from pathlib import Path
         # from src.utils.visualization_utils import viz_skeletons
