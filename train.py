@@ -18,7 +18,7 @@ from torch.nn.utils.rnn import pad_sequence
 # Add unisign path to system environment
 sys.path.append('third_party/unisign/')
 
-from src.metrics import bert_score
+from src.metrics import bert_score, islr_performance_topk
 from third_party.unisign.SLRT_metrics import translation_performance, islr_performance
 from src.config import (
     model_name_or_path,
@@ -145,9 +145,8 @@ def main(args):
     max_accuracy = 0    
     if args.eval:
         if utils.is_main_process():
-            if "ISLR" not in args.tasks:
-                print("📄 dev result")
-                evaluate(args, dev_dataloader, model, model_without_ddp, phase='dev')
+            print("📄 dev result")
+            evaluate(args, dev_dataloader, model, model_without_ddp, phase='dev')
             print("📄 test result")
             evaluate(args, test_dataloader, model, model_without_ddp, phase='test')
 
@@ -337,14 +336,23 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
         top1_acc_pi, top1_acc_pc = islr_performance(tgt_refs, tgt_pres)
         metric_logger.meters['top1_acc_pi'].update(top1_acc_pi)
         metric_logger.meters['top1_acc_pc'].update(top1_acc_pc)
+        
+        # top5_acc_pi, top5_acc_pc = islr_performance_topk(tgt_refs, tgt_pres, k=5)
+        # metric_logger.meters['top5_acc_pi'].update(top5_acc_pi)
+        # metric_logger.meters['top5_acc_pc'].update(top5_acc_pc)
         print(
             f"ISLR results\n"
-            f"Top-1 Acc (PI): {top1_acc_pi:.2f}%\n"
-            f"Top-1 Acc (PC): {top1_acc_pc:.2f}%"
+            f"Top-1 Acc (P-I): {top1_acc_pi:.2f}%\n"
+            # f"Top-5 Acc (PI): {top5_acc_pi:.2f}%\n"
+            # '#############################\n'
+            f"Top-1 Acc (P-C): {top1_acc_pc:.2f}%"
+            # f"Top-5 Acc (PC): {top5_acc_pc:.2f}%\n"
         )
         wandb.log({
             f'{phase}/top1_acc_pi': top1_acc_pi,
             f'{phase}/top1_acc_pc': top1_acc_pc,
+            # f'{phase}/top5_acc_pi': top5_acc_pi,
+            # f'{phase}/top5_acc_pc': top5_acc_pc,
         })
 
     # # gather the stats from all processes
