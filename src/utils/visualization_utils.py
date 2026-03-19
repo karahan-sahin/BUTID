@@ -74,12 +74,15 @@ mp_connections = {
         [4, 6],
         [6, 8],
     ],
-    'face': [
-        # TODO: Define face connections for MediaPipe if needed
-    ]
+    'face': (
+        [[i, i + 1] for i in range(9 - 1)]
+        + [[i, i + 1] for i in range(9, 9 + 8 - 1)]
+        + [[9 + 8 - 1, 9]]
+        + [[17, i] for i in range(17)]
+    )
 }
 
-def viz_skeletons(skeletons, save_path: Path = None, title="Skeleton Visualization", outfile=None, pose_type='rtm'):
+def viz_skeletons(skeletons, save_path: Path = None, title="Skeleton Visualization", outfile=None, pose_type='mp'):
     """
     Visualize skeletons using matplotlib.
 

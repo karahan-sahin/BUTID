@@ -6,7 +6,7 @@ import math
 import copy
 
 
-class GraphMP(object):
+class GraphMP:
     """The Graph to model the skeletons extracted by the openpose
 
     Args:
@@ -87,8 +87,6 @@ class GraphMP(object):
             neighbor_link = neighbor_1base
             self.edge = self_link + neighbor_link
             self.center = 0
-            
-        # TODO: Fix face graph
         elif layout == 'face':
             self.num_node = 9 + 8 + 1
             self_link = [(i, i) for i in range(self.num_node)]
