@@ -1,3 +1,6 @@
-[submodule "third-party/unisign"]
-	path = third-party/unisign
+[submodule "third_party/bsldict"]
+	path = third_party/bsldict
+	url = https://github.com/gulvarol/bsldict.git
+[submodule "third_party/unisign"]
+	path = third_party/unisign
 	url = https://github.com/ZechengLi19/Uni-Sign
