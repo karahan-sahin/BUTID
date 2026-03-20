@@ -405,7 +405,10 @@ class BUTIDDataset(BaseDataset):
         super(BUTIDDataset, self).__init__()
         self.args = args
         self.max_length = args.max_length
-        self.raw_data = pd.read_csv(path).to_dict(orient="records")
+        self.raw_data = pd.read_csv(path)
+        # shuffle the data
+        self.raw_data = self.raw_data.sample(frac=1).reset_index(drop=True)
+        self.raw_data = self.raw_data.to_dict(orient="records")
         self.phase = phase
 
         self.pose_dir = pose_dirs[self.args.dataset]
