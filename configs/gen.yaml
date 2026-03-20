@@ -1,0 +1,10 @@
+modes:
+  - body
+  - face
+  - left
+  - right
+
+online_data_loading: true  # whether to load pose and vq features on-the-fly during training/evaluation; set to false to pre-extract and save all features to disk before training (not recommended due to large storage requirements)
+start_pad: 3               # seconds before the start timestamp of a sample to include in the pose and vq features
+end_pad: 3                 # seconds after the end timestamp of a sample to include in the pose and vq features
+

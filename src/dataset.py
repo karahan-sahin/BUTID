@@ -420,6 +420,9 @@ class BUTIDDataset(BaseDataset):
         for task in self.tasks:
             self.list_key += list(range(len(self.raw_data)))
             self.list_task += [task] * len(self.raw_data)
+            
+        self.start_pad = args.start_pad if hasattr(args, "start_pad") else 0
+        self.end_pad = args.end_pad if hasattr(args, "end_pad") else 0
 
         # Pre-open all h5 file handles indexed by video_id
         unique_video_ids = {sample["video_id"] for sample in self.raw_data}
@@ -466,8 +469,12 @@ class BUTIDDataset(BaseDataset):
         else:
             gloss = ""
 
-        pose_sample = self.load_pose(sample["video_id"], sample["start"], sample["end"])
-        vq_sample = self.load_vq(sample["video_id"], sample["start"], sample["end"])
+        if self.args.online_data_loading:
+            pose_sample = self.load_pose(sample["video_id"], sample["start"], sample["end"])
+            vq_sample = self.load_vq(sample["video_id"], sample["start"], sample["end"])
+        else:
+            pose_sample = torch.load(os.path.join(self.pose_dir, video_id, f"{key}.pt"))['pose']
+            vq_sample   = self.load_vq(sample["video_id"], sample["start"], sample["end"])
 
         if self.args.debug:
             from pathlib import Path
@@ -493,6 +500,8 @@ class BUTIDDataset(BaseDataset):
             return None
 
         pose = []
+        start = max(0, start - self.start_pad * 25)
+        end = end + self.end_pad * 25
         for frame in range(start, end):
             frame_grp = h5f["keypoints"].get(f"frame_{frame:04d}")
             if frame_grp is not None:
