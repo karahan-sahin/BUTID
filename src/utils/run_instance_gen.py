@@ -36,8 +36,8 @@ def main(args):
     os.makedirs(args.output_dir, exist_ok=True)
     # iterate over the dataset and save each instance .pt file
     for i in tqdm(range(len(train_data)), desc="Saving train instances"):
-        video_id  = train_data.list_key[i]['video_id']
-        caption_id = train_data.list_key[i]['key']
+        video_id   = train_data.raw_data[i]['video_id']
+        caption_id = train_data.raw_data[i]['caption_id']
         if os.path.exists(os.path.join(args.output_dir, video_id, f"{caption_id}.pt")):
             continue
         key, pose_sample, vq_sample, text, gloss, task = train_data[i]
@@ -55,8 +55,8 @@ def main(args):
             torch.save(instance, os.path.join(args.output_dir, video_id, f"{caption_id}.pt"))
         
     for i in tqdm(range(len(dev_data)), desc="Saving dev instances"):
-        video_id  = dev_data.list_key[i]['video_id']
-        caption_id = dev_data.list_key[i]['key']
+        video_id   = dev_data.raw_data[i]['video_id']
+        caption_id = dev_data.raw_data[i]['caption_id']
         if os.path.exists(os.path.join(args.output_dir, video_id, f"{caption_id}.pt")):
             continue
         key, pose_sample, vq_sample, text, gloss, task = dev_data[i]
@@ -74,8 +74,8 @@ def main(args):
             torch.save(instance, os.path.join(args.output_dir, video_id, f"{caption_id}.pt"))
         
     for i in tqdm(range(len(test_data)), desc="Saving test instances"):
-        video_id  = test_data.list_key[i]['video_id']
-        caption_id = test_data.list_key[i]['key']
+        video_id   = test_data.raw_data[i]['video_id']
+        caption_id = test_data.raw_data[i]['caption_id']
         if os.path.exists(os.path.join(args.output_dir, video_id, f"{caption_id}.pt")):
             continue
         
