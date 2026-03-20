@@ -244,45 +244,80 @@ def main(args):
 def train_one_epoch(args, model, data_loader, optimizer, epoch):
     model.train()
 
+    from deepspeed.profiling.flops_profiler import FlopsProfiler
+    profile_step = len(data_loader) // 2
+    prof = FlopsProfiler(model)
+
     metric_logger = utils.MetricLogger(delimiter="  ")
-    metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
-    header = "Epoch: [{}/{}]".format(epoch, args.epochs)
+    metric_logger.add_meter("lr",     utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
+    metric_logger.add_meter("t_data", utils.SmoothedValue(fmt="{avg:.3f}"))
+    metric_logger.add_meter("t_fwd",  utils.SmoothedValue(fmt="{avg:.3f}"))
+    metric_logger.add_meter("t_bwd",  utils.SmoothedValue(fmt="{avg:.3f}"))
+    metric_logger.add_meter("t_step", utils.SmoothedValue(fmt="{avg:.3f}"))
+
+    header = f"Epoch: [{epoch}/{args.epochs}]"
+    print_freq = 5
+
     optimizer.zero_grad()
+    target_dtype = torch.bfloat16 if model.bfloat16_enabled() else None
 
-    target_dtype = None
-    if model.bfloat16_enabled():
-        target_dtype = torch.bfloat16
-
+    _data_end = time.time()
     for step, (src_input, tgt_input) in enumerate(
-        metric_logger.log_every(data_loader, args.print_freq, header)
+        metric_logger.log_every(data_loader, print_freq, header)
     ):
+        metric_logger.update(t_data=time.time() - _data_end)
+
+        if step == profile_step:
+            prof.start_profile()
+
         if target_dtype != None:
             for key in src_input.keys():
                 if isinstance(src_input[key], torch.Tensor):
                     src_input[key] = src_input[key].to(target_dtype).cuda()
 
+        torch.cuda.synchronize()
+        _fwd_start = time.time()
         stack_out = model(src_input, tgt_input)
+        torch.cuda.synchronize()
+        metric_logger.update(t_fwd=time.time() - _fwd_start)
 
         total_loss = stack_out["loss"]
+        torch.cuda.synchronize()
+        _bwd_start = time.time()
         model.backward(total_loss)
+        torch.cuda.synchronize()
+        metric_logger.update(t_bwd=time.time() - _bwd_start)
+
+        _step_start = time.time()
         model.step()
+        torch.cuda.synchronize()
+        metric_logger.update(t_step=time.time() - _step_start)
+
+        if step == profile_step and args.debug:
+            prof.print_model_profile(profile_step=profile_step)
+            prof.end_profile()
 
         loss_value = total_loss.item()
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+            print(f"Loss is {loss_value}, stopping training")
             sys.exit(1)
 
-        metric_logger.update(loss=loss_value)
+        for k in stack_out:
+            if "loss" in k and stack_out[k] is not None:
+                metric_logger.update(**{k: stack_out[k].item()})
+
         metric_logger.update(lr=optimizer.param_groups[0]["lr"])
+        _data_end = time.time()
 
         if utils.is_main_process():
-            wandb.log(
-                {
-                    "train/loss": loss_value,
-                    "train/lr": optimizer.param_groups[0]["lr"],
-                }
-            )
-
+            wandb.log({
+                **{
+                f"train/{k}": stack_out[k].item()
+                for k in stack_out
+                if "loss" in k and stack_out[k] is not None
+                },
+                "train/lr": optimizer.param_groups[0]["lr"],
+            })
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)

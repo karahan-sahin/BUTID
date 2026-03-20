@@ -11,6 +11,7 @@ import torch
 import torch.utils.data.dataset as Dataset
 from torch.nn.utils.rnn import pad_sequence
 import numpy as np
+from tqdm import tqdm
 from PIL import Image
 
 # # visualize
@@ -420,6 +421,35 @@ class BUTIDDataset(BaseDataset):
             self.list_key += list(range(len(self.raw_data)))
             self.list_task += [task] * len(self.raw_data)
 
+        # Pre-open all h5 file handles indexed by video_id
+        unique_video_ids = {sample["video_id"] for sample in self.raw_data}
+        self.h5_paths = {
+            vid: os.path.join(self.pose_dir, f"{vid}.h5")
+            for vid in unique_video_ids
+        }
+        self.h5_files = {
+            vid: h5py.File(p, "r")
+            for vid, p in tqdm(self.h5_paths.items(), desc=f"Opening h5 files for {phase}")
+            if os.path.exists(p)
+        }
+
+    def __getstate__(self):
+        """Close h5 file handles before pickling (DataLoader multiprocessing)."""
+        state = self.__dict__.copy()
+        for f in state["h5_files"].values():
+            f.close()
+        state["h5_files"] = {}
+        return state
+
+    def __setstate__(self, state):
+        """Reopen h5 file handles after unpickling in each worker."""
+        self.__dict__.update(state)
+        self.h5_files = {
+            vid: h5py.File(p, "r")
+            for vid, p in self.h5_paths.items()
+            if os.path.exists(p)
+        }
+
     def __len__(self):
         return len(self.list_key)
 
@@ -457,26 +487,23 @@ class BUTIDDataset(BaseDataset):
 
     def load_pose(self, path, start, end):
 
-        pose_path = os.path.join(self.pose_dir, f"{path}.h5")
-
-        if not os.path.exists(pose_path):
-            print(f"Pose file {pose_path} does not exist.")
+        h5f = self.h5_files.get(path)
+        if h5f is None:
+            print(f"Pose file for {path} does not exist.")
             return None
 
         pose = []
-        with h5py.File(pose_path, "r") as h5f:
-            # sample 5 keys for debug
-            for frame in range(start, end):
-                frame_grp = h5f["keypoints"].get(f"frame_{frame:04d}")
-                if frame_grp is not None:
-                    pose.append(
-                        {
-                            "body": frame_grp["pose_landmarks"][:],
-                            "left": frame_grp["left_hand_landmarks"][:],
-                            "right": frame_grp["right_hand_landmarks"][:],
-                            "face": frame_grp["face_landmarks"][:],
-                        }
-                    )
+        for frame in range(start, end):
+            frame_grp = h5f["keypoints"].get(f"frame_{frame:04d}")
+            if frame_grp is not None:
+                pose.append(
+                    {
+                        "body": frame_grp["pose_landmarks"][:],
+                        "left": frame_grp["left_hand_landmarks"][:],
+                        "right": frame_grp["right_hand_landmarks"][:],
+                        "face": frame_grp["face_landmarks"][:],
+                    }
+                )
 
         if len(pose) == 0:
             return None
