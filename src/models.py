@@ -80,62 +80,220 @@ class UniSignConfig:
     label_smoothing: float = 0.1
     tgt_lang: str = "English"
     proj_dim: int = 64
+    proj_layer: str = "mlp"
 
+
+import torch
+from torch import nn
+from einops import rearrange
+
+class MLPPartEncoder(nn.Module):
+    """
+    Input:  x   -> [B, T, V, 3]
+            last dim is assumed to be (x, y, conf) or (x, y, z/conf)
+    Output: out -> [B, T, C]
+    """
+    def __init__(self, num_joints: int, proj_dim: int, dropout: float = 0.1, use_temporal_conv: bool = True):
+        super().__init__()
+        self.num_joints = num_joints
+        self.proj_dim = proj_dim
+        self.use_temporal_conv = use_temporal_conv
+
+        # richer per-joint projection than a single Linear(3, C)
+        self.joint_proj = nn.Sequential(
+            nn.Linear(3, proj_dim),
+            nn.LayerNorm(proj_dim),
+            nn.GELU(),
+            nn.Linear(proj_dim, proj_dim),
+        )
+
+        # learned joint identity embedding
+        self.joint_embed = nn.Parameter(torch.zeros(1, 1, num_joints, proj_dim))
+
+        # confidence-aware gating for pooling across joints
+        self.gate_mlp = nn.Sequential(
+            nn.Linear(proj_dim, proj_dim // 2),
+            nn.GELU(),
+            nn.Linear(proj_dim // 2, 1),
+        )
+
+        self.pre_pool_norm = nn.LayerNorm(proj_dim)
+
+        if use_temporal_conv:
+            self.temporal = nn.Sequential(
+                nn.Conv1d(proj_dim, proj_dim, kernel_size=3, padding=1, groups=proj_dim),
+                nn.GELU(),
+                nn.Conv1d(proj_dim, proj_dim, kernel_size=1),
+                nn.Dropout(dropout),
+            )
+            self.temporal_norm = nn.LayerNorm(proj_dim)
+
+        self.out = nn.Sequential(
+            nn.Linear(proj_dim, proj_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        nn.init.trunc_normal_(self.joint_embed, std=0.02)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.trunc_normal_(m.weight, std=0.02)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1.0)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # x: [B, T, V, 3]
+        B, T, V, D = x.shape
+        assert V == self.num_joints, f"Expected {self.num_joints} joints, got {V}"
+
+        coord = x[..., :3]  # keep your original assumption
+        feat = self.joint_proj(coord) + self.joint_embed  # [B, T, V, C]
+        feat = self.pre_pool_norm(feat)
+
+        # confidence-aware gated pooling
+        # if last channel is confidence, use it; otherwise pooling still works
+        conf = x[..., 2:3] if D >= 3 else None
+
+        gate_logits = self.gate_mlp(feat)  # [B,T,V,1]
+        if conf is not None:
+            gate_logits = gate_logits + conf
+
+        gate = torch.softmax(gate_logits, dim=2)
+        pooled = (feat * gate).sum(dim=2)  # [B,T,C]
+
+        if self.use_temporal_conv:
+            residual = pooled
+            pooled_t = rearrange(pooled, "b t c -> b c t")
+            pooled_t = self.temporal(pooled_t)
+            pooled = rearrange(pooled_t, "b c t -> b t c")
+            pooled = self.temporal_norm(pooled + residual)
+
+        pooled = self.out(pooled)
+        return pooled
 
 class UniSign(nn.Module):
     def __init__(self, config):
         super(UniSign, self).__init__()
         self.config = config
 
-        self.modes = self.config.modes  # 'face'
+        self.modes = self.config.modes
 
-        from src.stgcn_layers import GraphMP as Graph
+        if self.config.proj_layer == "gcn":
+            from src.stgcn_layers import GraphMP as Graph
 
-        self.graph, A = {}, []
-        # project (x,y,score) to hidden dim
-        hidden_dim = config.hidden_dim
-        self.proj_linear = nn.ModuleDict()
-        for mode in self.modes:
-            self.graph[mode] = Graph(layout=f"{mode}", strategy="distance", max_hop=1)
-            A.append(
-                torch.tensor(
-                    self.graph[mode].A, dtype=torch.float32, requires_grad=False
+            self.graph, A = {}, []
+            hidden_dim = config.hidden_dim
+            self.proj_linear = nn.ModuleDict()
+
+            for mode in self.modes:
+                self.graph[mode] = Graph(layout=f"{mode}", strategy="distance", max_hop=1)
+                A.append(
+                    torch.tensor(
+                        self.graph[mode].A, dtype=torch.float32, requires_grad=False
+                    )
                 )
-            )
-            self.proj_linear[mode] = nn.Linear(3, config.proj_dim)
+                self.proj_linear[mode] = nn.Linear(3, config.proj_dim)
 
-        self.gcn_modules = nn.ModuleDict()
-        self.fusion_gcn_modules = nn.ModuleDict()
-        spatial_kernel_size = A[0].size(0)
-        for index, mode in enumerate(self.modes):
-            self.gcn_modules[mode], final_dim = get_stgcn_chain(
-                config.proj_dim,
-                "spatial",
-                (1, spatial_kernel_size),
-                A[index].clone(),
-                True,
-            )
-            self.fusion_gcn_modules[mode], _ = get_stgcn_chain(
-                final_dim, "temporal", (5, spatial_kernel_size), A[index].clone(), True
-            )
+            self.gcn_modules = nn.ModuleDict()
+            self.fusion_gcn_modules = nn.ModuleDict()
+            spatial_kernel_size = A[0].size(0)
 
-        self.gcn_final_dim = final_dim
+            for index, mode in enumerate(self.modes):
+                self.gcn_modules[mode], final_dim = get_stgcn_chain(
+                    config.proj_dim,
+                    "spatial",
+                    (1, spatial_kernel_size),
+                    A[index].clone(),
+                    True,
+                )
+                self.fusion_gcn_modules[mode], _ = get_stgcn_chain(
+                    final_dim,
+                    "temporal",
+                    (5, spatial_kernel_size),
+                    A[index].clone(),
+                    True,
+                )
 
-        self.gcn_modules["left"] = self.gcn_modules["right"]
-        self.fusion_gcn_modules["left"] = self.fusion_gcn_modules["right"]
-        self.proj_linear["left"] = self.proj_linear["right"]
+            self.gcn_final_dim = final_dim
 
-        mt5_model     = MT5ForConditionalGeneration.from_pretrained(config.mt5_path)
+            self.gcn_modules["left"] = self.gcn_modules["right"]
+            self.fusion_gcn_modules["left"] = self.fusion_gcn_modules["right"]
+            self.proj_linear["left"] = self.proj_linear["right"]
+
+            fused_dim = self.gcn_final_dim * len(self.modes)
+
+            self.part_type_embed = nn.ParameterDict({
+                mode: nn.Parameter(torch.zeros(1, 1, self.gcn_final_dim))
+                for mode in self.modes
+            })
+
+            for mode in self.modes:
+                nn.init.trunc_normal_(self.part_type_embed[mode], std=0.02)
+
+        elif self.config.proj_layer == "mlp":
+            print("Selected improved mlp encoder")
+
+            # infer number of joints per part from dataset convention / config
+            # better to store these in config if possible
+            self.part_encoder = nn.ModuleDict()
+            for mode in self.modes:
+                if mode == "body":
+                    num_joints = 9
+                elif mode == "left":
+                    num_joints = 21
+                elif mode == "right":
+                    num_joints = 21
+                elif mode == "face":
+                    num_joints = 9 + 8 + 1
+                else:
+                    raise ValueError(f"Unknown mode: {mode}")
+
+                self.part_encoder[mode] = MLPPartEncoder(
+                    num_joints=num_joints,
+                    proj_dim=config.proj_dim,
+                    dropout=getattr(config, "dropout", 0.1),
+                    use_temporal_conv=getattr(config, "mlp_temporal_conv", True),
+                )
+
+            # optional weight sharing between left/right hands
+            if "left" in self.modes and "right" in self.modes:
+                self.part_encoder["left"] = self.part_encoder["right"]
+
+            self.gcn_modules = None
+            self.fusion_gcn_modules = None
+            self.gcn_final_dim = config.proj_dim
+
+            fused_dim = config.proj_dim * len(self.modes)
+            
+            self.part_type_embed = nn.ParameterDict({
+                mode: nn.Parameter(torch.zeros(1, 1, config.proj_dim))
+                for mode in self.modes
+            })
+            for mode in self.modes:
+                nn.init.trunc_normal_(self.part_type_embed[mode], std=0.02)
+        else:
+            raise ValueError(f"Unknown proj_layer: {self.config.proj_layer}")
+
+        mt5_model = MT5ForConditionalGeneration.from_pretrained(config.mt5_path)
         mt5_tokenizer = T5Tokenizer.from_pretrained(config.mt5_path, legacy=False)
         mt5_embed_dim = mt5_model.config.d_model
 
-        self.part_para = nn.Parameter(torch.zeros(hidden_dim * len(self.modes)))
-        self.pose_proj = nn.Linear(self.gcn_final_dim * len(self.modes), mt5_embed_dim)
+        self.part_para = nn.Parameter(torch.zeros(fused_dim))
+        self.pose_proj = nn.Linear(fused_dim, mt5_embed_dim)
 
         self.apply(self._init_weights)
 
         self.tgt_lang = self.config.tgt_lang
-
         self.mt5_model = mt5_model
         self.mt5_tokenizer = mt5_tokenizer
 
@@ -159,41 +317,45 @@ class UniSign(nn.Module):
         else:
             return contextlib.nullcontext()
 
-    def forward(self, src_input, tgt_input):
-        # Pose branch forward
+    def encode_pose(self, src_input):
         features = []
 
-        body_feat = None
-        for part in self.modes:
-            # project position to hidden dim
-            proj_feat = self.proj_linear[part](src_input[part]).permute(
-                0, 3, 1, 2
-            )  # B,C,T,V
-            # spatial gcn forward
-            gcn_feat = self.gcn_modules[part](proj_feat)
-            if part == "body":
-                body_feat = gcn_feat
+        if self.config.proj_layer == "mlp":
+            for part in self.modes:
+                pool_feat = self.part_encoder[part](src_input[part])  # B,T,C
+                pool_feat = pool_feat + self.part_type_embed[part]
+                features.append(pool_feat)
+        else:
+            body_feat = None
+            for part in self.modes:
+                proj_feat = self.proj_linear[part](src_input[part]).permute(0, 3, 1, 2)
 
-            else:
-                assert not body_feat is None
-                if part == "left":
-                    gcn_feat = gcn_feat + body_feat[..., -2][..., None].detach()
-                elif part == "right":
-                    gcn_feat = gcn_feat + body_feat[..., -1][..., None].detach()
-                elif part == "face":
-                    gcn_feat = gcn_feat + body_feat[..., 0][..., None].detach()
-
+                gcn_feat = self.gcn_modules[part](proj_feat)
+                if part == "body":
+                    body_feat = gcn_feat
                 else:
-                    raise NotImplementedError
+                    assert body_feat is not None
+                    if part == "left":
+                        gcn_feat = gcn_feat + body_feat[..., -2][..., None].detach()
+                    elif part == "right":
+                        gcn_feat = gcn_feat + body_feat[..., -1][..., None].detach()
+                    elif part == "face":
+                        gcn_feat = gcn_feat + body_feat[..., 0][..., None].detach()
+                    else:
+                        raise NotImplementedError
 
-            # temporal gcn forward
-            gcn_feat = self.fusion_gcn_modules[part](gcn_feat)  # B,C,T,V
-            pool_feat = gcn_feat.mean(-1).transpose(1, 2)  # B,T,C
-            features.append(pool_feat)
+                gcn_feat = self.fusion_gcn_modules[part](gcn_feat)
+                pool_feat = gcn_feat.mean(-1).transpose(1, 2)
+                pool_feat = pool_feat + self.part_type_embed[part]
+                features.append(pool_feat)
 
-        # concat sub-pose feature across token dimension
-        inputs_embeds = torch.cat(features, dim=-1) + self.part_para
+        inputs_embeds = torch.cat(features, dim=-1)
         inputs_embeds = self.pose_proj(inputs_embeds)
+        return inputs_embeds
+
+    def forward(self, src_input, tgt_input):
+
+        inputs_embeds = self.encode_pose(src_input)
 
         prefix_token = self.mt5_tokenizer(
             [
@@ -297,7 +459,7 @@ class UniVQSign(nn.Module):
         mt5_embed_dim = mt5_model.config.d_model
 
         self.part_para = nn.Parameter(torch.zeros(config.proj_dim * len(self.modes)))
-        self.pose_proj = nn.Linear(config.proj_dim * len(self.modes), mt5_embed_dim)
+        self.llm_proj  = nn.Linear(config.proj_dim * len(self.modes), mt5_embed_dim)
 
         self.apply(self._init_weights)
 
@@ -336,8 +498,8 @@ class UniVQSign(nn.Module):
             features.append(vq_feat)
             
         # concat sub-pose feature across token dimension
-        inputs_embeds = torch.cat(features, dim=-1) + self.part_para
-        inputs_embeds = self.pose_proj(inputs_embeds)
+        inputs_embeds = torch.cat(features, dim=-1).to(self.part_para.device) + self.part_para
+        inputs_embeds = self.llm_proj(inputs_embeds)
 
         prefix_token = self.mt5_tokenizer(
             [
@@ -362,7 +524,7 @@ class UniVQSign(nn.Module):
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=50,
+            max_length=100,
         )
 
         labels = tgt_input_tokenizer["input_ids"]

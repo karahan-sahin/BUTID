@@ -23,6 +23,23 @@ import sys
 sys.path.append("./third_party/unisign")
 import third_party.unisign.utils as utils
 
+import signal
+
+class TimeoutException(Exception):
+    pass
+
+def _timeout_handler(signum, frame):
+    raise TimeoutException()
+
+def run_with_timeout(func, timeout, *args, **kwargs):
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout)
+    try:
+        result = func(*args, **kwargs)
+    finally:
+        signal.alarm(0)
+    return result
+
 BODY_IDXS_MP = [0, 7, 8, 11, 12, 13, 14, 15, 16]
 HAND_IDXS_MP = list(range(21))
 FACE_IDXS_MP = [ 162, 93, 172, 149, 152, 378, 397, 323, 389, 78, 82, 13, 312, 308, 317, 14, 87, 4 ]
@@ -237,54 +254,91 @@ class BaseDataset(Dataset.Dataset):
 
         for name_sample, pose_sample, vq_sample, text, gloss, task in batch:
 
-            if pose_sample is None:
+            if pose_sample is None and self.args.input_mode == "pose":
+                continue
+            if vq_sample is None and self.args.input_mode == "vq":
                 continue
 
             name_batch.append(name_sample)
-            pose_tmp.append(load_part_mp(pose_sample))
-            vq_tmp.append(vq_sample)
+            pose_tmp.append(load_part_mp(pose_sample) if self.args.input_mode == "pose" else None)
+            vq_tmp.append(vq_sample if self.args.input_mode == "vq" else None)
             tgt_batch.append(text)
             gloss_batch.append(gloss)
             task_batch.append(task)
 
         src_input = {}
 
-        keys = pose_tmp[0].keys()
-        for key in keys:
+        if self.args.input_mode == "pose":
+            keys = pose_tmp[0].keys()
+            for key in keys:
 
-            max_len = max([len(vid[key]) for vid in pose_tmp])
-            video_length = torch.LongTensor([len(vid[key]) for vid in pose_tmp])
+                max_len = max([len(vid[key]) for vid in pose_tmp])
+                video_length = torch.LongTensor([len(vid[key]) for vid in pose_tmp])
 
-            padded_video = [
-                torch.cat(
-                    (
-                        vid[key],
-                        vid[key][-1][None].expand(max_len - len(vid[key]), -1, -1),
-                    ),
-                    dim=0,
-                )
-                for vid in pose_tmp
+                padded_video = [
+                    torch.cat(
+                        (
+                            vid[key],
+                            vid[key][-1][None].expand(max_len - len(vid[key]), -1, -1),
+                        ),
+                        dim=0,
+                    )
+                    for vid in pose_tmp
+                ]
+
+                img_batch = torch.stack(padded_video, 0)
+
+                src_input[key] = img_batch
+                if "attention_mask" not in src_input.keys():
+                    src_length_batch = video_length
+
+                    mask_gen = []
+                    for i in src_length_batch:
+                        tmp = torch.ones([i]) + 7
+                        mask_gen.append(tmp)
+                    mask_gen = pad_sequence(mask_gen, padding_value=0, batch_first=True)
+                    img_padding_mask = (mask_gen != 0).long()
+                    src_input["attention_mask"] = img_padding_mask
+
+                    src_input["name_batch"] = name_batch
+                    src_input["src_length_batch"] = src_length_batch
+
+        elif self.args.input_mode == "vq":
+            # vq_tmp: list of numpy arrays with shape [4, T]
+            vq_tensors = [
+                torch.from_numpy(v) if isinstance(v, np.ndarray) else v
+                for v in vq_tmp
             ]
+            # vq_tensors: list of [4, T_i]
+            src_length_batch = torch.LongTensor([v.shape[1] for v in vq_tensors])
+            max_len = src_length_batch.max().item()
 
-            img_batch = torch.stack(padded_video, 0)
+            # Pad each [4, T_i] -> [4, max_len] with 0, then stack to [B, 4, max_len]
+            vq_padded = torch.stack(
+                [
+                    torch.nn.functional.pad(v, (0, max_len - v.shape[1]), value=0)
+                    for v in vq_tensors
+                ],
+                dim=0,
+            )
 
-            src_input[key] = img_batch
-            if "attention_mask" not in src_input.keys():
-                src_length_batch = video_length
+            mask_gen = pad_sequence(
+                [torch.ones(l) for l in src_length_batch],
+                batch_first=True,
+                padding_value=0,
+            )
+            # partition vq into body, left, right, face — [B, T] for nn.Embedding
+            src_input["body"]  = vq_padded[:, 0, :].long()  # [B, T]
+            src_input["left"]  = vq_padded[:, 1, :].long()  # [B, T]
+            src_input["right"] = vq_padded[:, 2, :].long()  # [B, T]
+            src_input["face"]  = vq_padded[:, 3, :].long()  # [B, T]
 
-                mask_gen = []
-                for i in src_length_batch:
-                    tmp = torch.ones([i]) + 7
-                    mask_gen.append(tmp)
-                mask_gen = pad_sequence(mask_gen, padding_value=0, batch_first=True)
-                img_padding_mask = (mask_gen != 0).long()
-                src_input["attention_mask"] = img_padding_mask
+            src_input["attention_mask"] = mask_gen.long()  # [B, T_max]
+            src_input["name_batch"] = name_batch
+            src_input["src_length_batch"] = src_length_batch
 
-                src_input["name_batch"] = name_batch
-                src_input["src_length_batch"] = src_length_batch
-
-            # add task info to src_input
-            src_input["tasks"] = task_batch
+        # add task info to src_input
+        src_input["tasks"] = task_batch
 
         tgt_input = {}
         tgt_input["text"] = tgt_batch
@@ -404,131 +458,237 @@ class BUTIDDataset(BaseDataset):
     def __init__(self, path, args, phase):
         super(BUTIDDataset, self).__init__()
         self.args = args
-        self.max_length = args.max_length
-        self.raw_data = pd.read_csv(path)
-        # shuffle the data
-        self.raw_data = self.raw_data.sample(frac=1).reset_index(drop=True)
-        self.raw_data = self.raw_data.to_dict(orient="records")
         self.phase = phase
+        self.max_length = args.max_length
+
+        self.raw_data = pd.read_csv(path)
+        # self.raw_data = self.raw_data.sample(frac=1).reset_index(drop=True)
+        self.raw_data = self.raw_data.to_dict(orient="records")
 
         self.pose_dir = pose_dirs[self.args.dataset]
-        self.vq_dir   = vq_dirs[self.args.dataset]
+        self.vq_dir = vq_dirs[self.args.dataset]
 
         if "BSign22k" in self.args.dataset or "AUTSL" in self.args.dataset:
             self.pose_dir = os.path.join(pose_dirs[self.args.dataset], phase)
             self.vq_dir = os.path.join(vq_dirs[self.args.dataset], phase)
+        
+        # check existing vq files and filter raw_data accordingly
+        existing_vq_files = set(os.listdir(self.vq_dir))
+        filtered_raw_data = []
+        for sample in self.raw_data:
+            video_id = sample["video_id"]
+            vq_filename = f"{video_id}.pkl"
+            if vq_filename in existing_vq_files:
+                filtered_raw_data.append(sample)
+            else:
+                pass
+                # print(f"Warning: VQ file {vq_filename} not found for video_id {video_id}. Skipping this sample.")
 
-        self.list_key, self.list_task = [], []
+        self.raw_data = filtered_raw_data
+
         self.tasks = args.tasks if isinstance(args.tasks, list) else [args.task]
+        self.list_key, self.list_task = [], []
         for task in self.tasks:
             self.list_key += list(range(len(self.raw_data)))
             self.list_task += [task] * len(self.raw_data)
-            
-        self.start_pad = args.start_pad if hasattr(args, "start_pad") else 0
-        self.end_pad = args.end_pad if hasattr(args, "end_pad") else 0
 
-        # Pre-open all h5 file handles indexed by video_id
-        unique_video_ids = {sample["video_id"] for sample in self.raw_data}
+        self.start_pad = getattr(args, "start_pad", 0)
+        self.end_pad = getattr(args, "end_pad", 0)
+
+        # Store only paths, not open file handles
         self.h5_paths = {
-            vid: os.path.join(self.pose_dir, f"{vid}.h5")
-            for vid in unique_video_ids
-        }
-        self.h5_files = {
-            vid: h5py.File(p, "r")
-            for vid, p in tqdm(self.h5_paths.items(), desc=f"Opening h5 files for {phase}")
-            if os.path.exists(p)
+            sample["video_id"]: os.path.join(self.pose_dir, f"{sample['video_id']}.h5")
+            for sample in self.raw_data
         }
 
-    def __getstate__(self):
-        """Close h5 file handles before pickling (DataLoader multiprocessing)."""
-        state = self.__dict__.copy()
-        for f in state["h5_files"].values():
-            f.close()
-        state["h5_files"] = {}
-        return state
+        # Small lazy-open cache per worker/process
+        self._h5_cache = {}
+        self._h5_cache_order = []
+        self._max_open_h5 = getattr(args, "max_open_h5", 8)
 
-    def __setstate__(self, state):
-        """Reopen h5 file handles after unpickling in each worker."""
-        self.__dict__.update(state)
-        self.h5_files = {
-            vid: h5py.File(p, "r")
-            for vid, p in self.h5_paths.items()
-            if os.path.exists(p)
-        }
+    def _get_h5(self, video_id):
+        path = self.h5_paths.get(video_id)
+        if path is None or not os.path.exists(path):
+            return None
+
+        if video_id in self._h5_cache:
+            return self._h5_cache[video_id]
+
+        f = h5py.File(path, "r")
+        self._h5_cache[video_id] = f
+        self._h5_cache_order.append(video_id)
+
+        # small FIFO/LRU-ish eviction
+        if len(self._h5_cache_order) > self._max_open_h5:
+            old_vid = self._h5_cache_order.pop(0)
+            old_f = self._h5_cache.pop(old_vid, None)
+            if old_f is not None:
+                try:
+                    old_f.close()
+                except Exception:
+                    pass
+
+        return f
+
+    def _close_h5_cache(self):
+        for f in self._h5_cache.values():
+            try:
+                f.close()
+            except Exception:
+                pass
+        self._h5_cache = {}
+        self._h5_cache_order = []
+
+    def __del__(self):
+        self._close_h5_cache()
 
     def __len__(self):
         return len(self.list_key)
 
     def __getitem__(self, index):
+        raw_idx = self.list_key[index]
         task = self.list_task[index]
-        sample = self.raw_data[index]
+        sample = self.raw_data[raw_idx]
 
         key = sample["caption_id"]
         video_id = sample["video_id"]
-
         text = sample["text"]
-        if "gloss" in sample.keys():
-            gloss = " ".join(sample["gloss"])
+
+        if "gloss" in sample and pd.notna(sample["gloss"]):
+            gloss_val = sample["gloss"]
+            if isinstance(gloss_val, list):
+                gloss = " ".join(gloss_val)
+            else:
+                gloss = str(gloss_val)
         else:
             gloss = ""
 
-        if self.args.online_data_loading:
-            pose_sample = self.load_pose(sample["video_id"], sample["start"], sample["end"])
-            vq_sample = self.load_vq(sample["video_id"], sample["start"], sample["end"])
-        else:
-            pose_sample = torch.load(os.path.join(self.pose_dir, video_id, f"{key}.pt"))['pose']
-            vq_sample   = self.load_vq(sample["video_id"], sample["start"], sample["end"])
+        TIMEOUT = getattr(self.args, "io_timeout", 5)  # seconds
+
+        try:
+            if self.args.online_data_loading:
+                pose_sample = (
+                    run_with_timeout(
+                        self.load_pose, TIMEOUT, video_id, sample["start"], sample["end"]
+                    )
+                    if self.args.input_mode == "pose"
+                    else None
+                )
+
+                vq_sample = (
+                    run_with_timeout(self.load_vq, TIMEOUT, key)
+                    if self.args.input_mode == "vq"
+                    else None
+                )
+
+            else:
+                pose_path = os.path.join(self.pose_dir, video_id, f"{key}.pt")
+
+                loaded = run_with_timeout(torch.load, TIMEOUT, pose_path, map_location="cpu")
+                pose_sample = loaded["pose"]
+
+                vq_sample = run_with_timeout(
+                    self.load_vq, TIMEOUT, video_id, sample["start"], sample["end"]
+                )
+
+        except TimeoutException:
+            print(f"[TIMEOUT] Skipping sample {key}")
+            return key, None, None, text, gloss, task
+
+        except Exception as e:
+            print(f"[ERROR] {key}: {e}")
+            return key, None, None, text, gloss, task
+
+        # Normalize/convert here so collate_fn does less CPU work
+        # Only convert if it's still in raw mediapipe-list form
+        # if isinstance(pose_sample, list):
+        #     pose_sample = load_part_mp(pose_sample)
 
         if self.args.debug:
             from pathlib import Path
             from src.utils.visualization_utils import viz_skeletons
-            os.system('rm ./debug_viz/*.png')
+
+            os.system("rm -f ./debug_viz/*.png")
             viz_skeletons(
-                load_part_mp(pose_sample),
-                Path("./debug_viz/") ,
+                pose_sample,
+                Path("./debug_viz/"),
                 outfile=f"{key}_mp.gif",
                 title=f"{key} - Translation: {text}",
-                pose_type='mp'
+                pose_type="mp",
             )
-            os.system('rm ./debug_viz/*.png')
+            os.system("rm -f ./debug_viz/*.png")
             breakpoint()
 
         return key, pose_sample, vq_sample, text, gloss, task
 
-    def load_pose(self, path, start, end):
-
-        h5f = self.h5_files.get(path)
+    def load_pose(self, video_id, start, end):
+        h5f = self._get_h5(video_id)
         if h5f is None:
-            print(f"Pose file for {path} does not exist.")
+            print(f"Pose file for {video_id} does not exist.")
+            return None
+
+        if "keypoints" not in h5f:
+            print(f"'keypoints' group missing in {video_id}.")
             return None
 
         pose = []
-        start = max(0, start - self.start_pad * 25)
-        end = end + self.end_pad * 25
+        start = max(0, int(start) - int(self.start_pad * 25))
+        end = int(end) + int(self.end_pad * 25)
+
+        keypoints_grp = h5f["keypoints"]
+
         for frame in range(start, end):
-            frame_grp = h5f["keypoints"].get(f"frame_{frame:04d}")
-            if frame_grp is not None:
-                pose.append(
-                    {
-                        "body": frame_grp["pose_landmarks"][:],
-                        "left": frame_grp["left_hand_landmarks"][:],
-                        "right": frame_grp["right_hand_landmarks"][:],
-                        "face": frame_grp["face_landmarks"][:],
-                    }
-                )
+            frame_grp = keypoints_grp.get(f"frame_{frame:04d}")
+            if frame_grp is None:
+                continue
+
+            pose.append(
+                {
+                    "body": frame_grp["pose_landmarks"][:] if "pose_landmarks" in frame_grp else np.zeros((33, 3), dtype=np.float32),
+                    "left": frame_grp["left_hand_landmarks"][:] if "lefts_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
+                    "right": frame_grp["right_hand_landmarks"][:] if "right_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
+                    "face": frame_grp["face_landmarks"][:] if "face_landmarks" in frame_grp else np.zeros((468, 3), dtype=np.float32),
+                }
+            )
 
         if len(pose) == 0:
             return None
 
+        # Keep temporal order
+        if len(pose) > self.max_length:
+            idx = sorted(random.sample(range(len(pose)), self.max_length))
+            pose = [pose[i] for i in idx]
+
         return pose
 
-    def load_vq(self, path, start, end):
-        # NOTE: This is a placeholder function. You should implement the actual logic to load VQ features based on your dataset structure and how you have stored the VQ features.
+    def load_vq(self, key):
+        video_id = key.split(".")[0] # video_id 
+        index = int(key.split(".")[-1]) - 1  # Assuming caption_id is like "video_id.0001", "video_id.0002", etc.
+        vq_path = os.path.join(self.vq_dir, f"{video_id}.pkl")
+        if not os.path.exists(vq_path):
+            print(f"VQ file for {vq_path} does not exist.")
+            return None
+        try:
+            with open(vq_path, "rb") as f:
+                vq_data = pickle.load(f)
+
+            if index < len(vq_data):
+                data = vq_data[index]
+                # filter max length
+                if data.shape[1] > self.max_length:
+                    idx = sorted(random.sample(range(data.shape[1]), self.max_length))
+                    data = data[:, idx]
+                return data
+            else:
+                print(f"Index {index} out of range for VQ data in {video_id}.")
+                return None
+        except Exception as e:
+            print(f"Error loading VQ data for {video_id}: {e}")
+
         return None
-    
+
     def __str__(self):
         return f"#total {len(self)}"
-
 
 class RTMDatasetForPretraining(BaseDataset):
     def __init__(self, path, args, phase):

@@ -25,7 +25,7 @@ pose_dirs = {
 }
 
 vq_dirs = {
-    "BUTID": "/home/ks0085/Documents/notebooks/butid/vq_codes/",
+    "BUTID": "/media/ks0085/storage/ks0085/datasets/TID/butid_vq/",
     "BSign22k": "/home/ks0085/Documents/notebooks/bsign22k/vq_codes/",
     "AUTSL": "/home/ks0085/Documents/notebooks/autsl/vq_codes/",
 }
