@@ -20,9 +20,8 @@ from src.config import pose_dirs, vq_dirs
 
 import sys
 
-sys.path.append("./third_party/unisign")
-import third_party.unisign.utils as utils
-
+sys.path.append("./third_party/unisign/")
+from third_party.unisign import utils
 import signal
 
 class TimeoutException(Exception):
@@ -796,3 +795,160 @@ class RTMDatasetForPretraining(BaseDataset):
 
     def __str__(self):
         return f"#total {len(self)}"
+
+
+class NewDataset(BaseDataset):
+    def __init__(self,
+                 csv_path,
+                 pose_dir,
+                 args,
+                 phase,
+                 min_len=0,
+                 max_len=None,
+                 ):
+        super().__init__()
+
+        self.args = args
+        self.phase = phase
+        self.min_len = min_len
+        self.max_len = max_len
+
+        self.raw_data = pd.read_csv(csv_path)
+        self.raw_data = self.raw_data[self.raw_data['end_frame']-self.raw_data['start_frame']>=self.min_len]
+        self.len = self.raw_data.shape[0]
+        self.raw_data = self.raw_data.to_dict(orient="records")
+
+        self.pose_dir = pose_dir
+        self.tasks = args.tasks if isinstance(args.tasks, list) else [args.tasks]
+        self.list_key, self.list_task = [], []
+        for task in self.tasks:
+            self.list_key += list(range(self.len))
+            self.list_task += [task] * self.len
+
+        self.start_pad = getattr(args, "start_pad", 0)
+        self.end_pad = getattr(args, "end_pad", 0)
+
+        self._h5_cache = {}
+        self._h5_cache_order = []
+        self._max_open_h5 = getattr(args, "max_open_h5", 8)
+
+        print('a')
+
+    def _get_h5(self, video_id):
+        path = os.path.join(self.pose_dir, f"{video_id}.h5")
+        if path is None or not os.path.exists(path):
+            return None
+
+        if video_id in self._h5_cache:
+            return self._h5_cache[video_id]
+
+        f = h5py.File(path, "r")
+        self._h5_cache[video_id] = f
+        self._h5_cache_order.append(video_id)
+
+        # small FIFO/LRU-ish eviction
+        if len(self._h5_cache_order) > self._max_open_h5:
+            old_vid = self._h5_cache_order.pop(0)
+            old_f = self._h5_cache.pop(old_vid, None)
+            if old_f is not None:
+                try:
+                    old_f.close()
+                except Exception:
+                    pass
+
+        return f
+
+    def _close_h5_cache(self):
+        for f in self._h5_cache.values():
+            try:
+                f.close()
+            except Exception:
+                pass
+        self._h5_cache = {}
+        self._h5_cache_order = []
+
+    def __del__(self):
+        self._close_h5_cache()
+
+    def __len__(self):
+        return self.len
+
+    def __str__(self):
+        return f"#total {self.len}"
+
+
+    def load_pose(self, video_id, start, end):
+        h5f = self._get_h5(video_id)
+        if h5f is None:
+            print(f"Pose file for {video_id} does not exist.")
+            return None
+
+        if "keypoints" not in h5f:
+            print(f"'keypoints' group missing in {video_id}.")
+            return None
+
+        pose = []
+        start = max(0, int(start) - int(self.start_pad * 25))
+        end = int(end) + int(self.end_pad * 25)
+
+        keypoints_grp = h5f["keypoints"]
+
+        for frame in range(start, end):
+            frame_grp = keypoints_grp.get(f"frame_{frame:04d}")
+            if frame_grp is None:
+                continue
+
+            pose.append(
+                {
+                    "body": frame_grp["pose_landmarks"][:] if "pose_landmarks" in frame_grp else np.zeros((33, 3), dtype=np.float32),
+                    "left": frame_grp["left_hand_landmarks"][:] if "lefts_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
+                    "right": frame_grp["right_hand_landmarks"][:] if "right_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
+                    "face": frame_grp["face_landmarks"][:] if "face_landmarks" in frame_grp else np.zeros((468, 3), dtype=np.float32),
+                }
+            )
+
+        if len(pose) == 0:
+            return None
+
+        # Keep temporal order
+        if len(pose) > self.max_len:
+            idx = sorted(random.sample(range(len(pose)), self.max_len))
+            pose = [pose[i] for i in idx]
+
+        return pose
+
+    def __getitem__(self, index):
+        raw_idx = self.list_key[index]
+        task = self.list_task[index]
+        sample = self.raw_data[raw_idx]
+
+        key = sample["index"]
+        video_id = sample["video"]
+        text = sample["text"]
+
+        TIMEOUT = getattr(self.args, "io_timeout", 30)  # seconds
+
+        try:
+            pose_sample = run_with_timeout(self.load_pose, TIMEOUT,
+                                           video_id, sample['start_frame'], sample['end_frame'])
+        except TimeoutException:
+            print(f"[TIMEOUT] Skipping sample {key}")
+            return key, None, None, text, None, task
+
+        except Exception as e:
+            print(f"[ERROR] {key}: {e}")
+            return key, None, None, text, None, task
+
+        return key, pose_sample, None, text, None, task
+
+
+
+
+
+
+
+
+
+
+
+

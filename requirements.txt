@@ -1,3 +1,10 @@
 bert_score
 wandb
 h5py
+timm
+einops
+deepspeed
+portalocker
+tiktoken
+SentencePiece
+rouge

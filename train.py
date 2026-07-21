@@ -16,13 +16,14 @@ from torch.utils.data import DataLoader
 
 from src.models import UniSign, UniSignConfig, UniVQSign, UniVQSignConfig
 from src.models import get_requires_grad_dict
-from src.dataset import BUTIDDataset
+from src.dataset import NewDataset
 from src.metrics import bert_score, islr_performance_topk
 from src.config import (
     train_label_paths,
     dev_label_paths,
     test_label_paths,
 )
+import torch.distributed as dist
 
 sys.path.append("./third_party/unisign/")
 from third_party.unisign import utils
@@ -57,20 +58,29 @@ def main(args):
             config={"args": vars(args)},
         )
 
-    train_data = BUTIDDataset(
-        path=train_label_paths[args.dataset],
+    train_data = NewDataset(
+        csv_path='/home/onursefa/Desktop/dataops/split/train.csv',
+        pose_dir='/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe',
         args=args,
-        phase="train",
+        phase='train',
+        min_len=32,
+        max_len=800
     )
-    dev_data = BUTIDDataset(
-        path=dev_label_paths[args.dataset],
+    dev_data = NewDataset(
+        csv_path='/home/onursefa/Desktop/dataops/split/val.csv',
+        pose_dir='/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe',
         args=args,
-        phase="dev",
+        phase='train',
+        min_len=32,
+        max_len=800
     )
-    test_data = BUTIDDataset(
-        path=test_label_paths[args.dataset],
+    test_data = NewDataset(
+        csv_path='/home/onursefa/Desktop/dataops/split/test.csv',
+        pose_dir='/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe',
         args=args,
-        phase="test",
+        phase='train',
+        min_len=32,
+        max_len=800
     )
 
     print(train_data)
@@ -140,7 +150,8 @@ def main(args):
         print("Creating model...")
         config = UniSignConfig(
             modes=args.modes, 
-            proj_layer=args.proj_layer,
+            # proj_layer=args.proj_layer,
+            proj_layer="mlp",
             hidden_dim=args.hidden_dim,
             mt5_path=args.model_name_or_path,
             label_smoothing=args.label_smoothing,
@@ -167,7 +178,7 @@ def main(args):
 
     for _, param in model.named_parameters():
         if param.requires_grad:
-            param.data = param.data.float()
+            param.data = param.data.float().contiguous()
 
     if args.finetune != "":
         print("***********************************")
@@ -318,33 +329,33 @@ def train_one_epoch(args, model, data_loader, optimizer, epoch):
 
         src_input = move_src_input_to_device(src_input, device, target_dtype=target_dtype)
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        # if torch.cuda.is_available():
+        #     torch.cuda.synchronize()
         _fwd_start = time.time()
 
         stack_out = model(src_input, tgt_input)
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        # if torch.cuda.is_available():
+        #     torch.cuda.synchronize()
         metric_logger.update(t_fwd=time.time() - _fwd_start)
 
         total_loss = stack_out["loss"]
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        # if torch.cuda.is_available():
+        #     torch.cuda.synchronize()
         _bwd_start = time.time()
 
         model.backward(total_loss)
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        # if torch.cuda.is_available():
+        #     torch.cuda.synchronize()
         metric_logger.update(t_bwd=time.time() - _bwd_start)
 
         _step_start = time.time()
         model.step()
 
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        # if torch.cuda.is_available():
+        #     torch.cuda.synchronize()
         metric_logger.update(t_step=time.time() - _step_start)
 
         loss_value = total_loss.item()
