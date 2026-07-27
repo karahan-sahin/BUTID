@@ -1,4 +1,4 @@
-#!bin/sh
+#!/bin/sh
 
 #SBATCH --job-name="BUTID SLT"
 #SBATCH --partition=rtx5000
