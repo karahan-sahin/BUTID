@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=gpu:4
-#SBATCH --mem-per-gpu=30G
-#SBATCH --time=00-00:15:00
+#SBATCH --mem-per-gpu=10G
+#SBATCH --time=03-00:00:00
 #SBATCH -o logs/slurm.%a.out
 #SBATCH -e logs/slurm.%a.err
 
@@ -22,7 +22,7 @@ apptainer exec --nv \
   --pwd "${PROJECT_DIR}" \
   "${SIF_IMAGE}" \
   deepspeed --include localhost:0,1,2,3 --master_port 29511 train.py \
-  --batch-size 32 \
+  --batch-size 48 \
   --gradient-accumulation-steps 8 \
   --epochs 30 \
   --opt AdamW \
