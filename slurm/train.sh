@@ -28,7 +28,7 @@ apptainer exec --nv \
   --opt AdamW \
   --lr 3e-4 \
   --quick_break 2048 \
-  --output_dir /home/onursefa/Desktop/temp/train_output \
+  --output_dir /mnt/fast/nobackup/scratch4weeks/bj134lq/data/train_output \
   --dataset BUTID \
   --tasks SLT \
   --csv-dir /mnt/fast/nobackup/users/bj134lq/BUTID/data/split \

@@ -30,6 +30,14 @@ from third_party.unisign import utils
 from third_party.unisign.SLRT_metrics import translation_performance, islr_performance
 
 
+def set_environment(env_path='.env'):
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            lines = f.readlines()
+        for line in lines:
+            values = line.split('=')
+            os.environ[values[0]] = values[1].strip()
+
 def move_src_input_to_device(src_input, device, target_dtype=None):
     for key, value in src_input.items():
         if isinstance(value, torch.Tensor):
@@ -549,6 +557,7 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
 
 if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    set_environment()
 
     from src.args import get_args_parser
 
