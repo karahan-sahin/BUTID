@@ -12,7 +12,8 @@
 
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
-PROJECT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 SIF_IMAGE="${PROJECT_DIR}/docker/butid.sif"
 DATA_ROOT="/mnt/fast"
 
