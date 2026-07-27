@@ -59,28 +59,24 @@ def main(args):
         )
 
     train_data = NewDataset(
-        csv_path='/home/onursefa/Desktop/dataops/split/train.csv',
-        pose_dir='/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe',
+        csv_dir=args.csv_dir,
+        pose_dir=args.pose_dir,
         args=args,
-        phase='train',
-        min_len=32,
-        max_len=800
+        phase='train'
     )
     dev_data = NewDataset(
-        csv_path='/home/onursefa/Desktop/dataops/split/val.csv',
-        pose_dir='/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe',
+        csv_dir=args.csv_dir,
+        pose_dir=args.pose_dir,
         args=args,
-        phase='train',
-        min_len=32,
-        max_len=800
+        phase='val',
+        not_use_short=True
     )
     test_data = NewDataset(
-        csv_path='/home/onursefa/Desktop/dataops/split/test.csv',
-        pose_dir='/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe',
+        csv_dir=args.csv_dir,
+        pose_dir=args.pose_dir,
         args=args,
-        phase='train',
-        min_len=32,
-        max_len=800
+        phase='test',
+        not_use_short=True
     )
 
     print(train_data)
@@ -266,23 +262,6 @@ def main(args):
                     f"BLEU-4 on dev set: {dev_stats['bleu4']:.2f}"
                 )
                 print(f"Max BLEU-4: {max_accuracy:.2f}")
-
-            elif "ISLR" in args.tasks:
-                if max_accuracy < dev_stats["top1_acc_pi"]:
-                    max_accuracy = dev_stats["top1_acc_pi"]
-                    best_path = output_dir / "ISLR" / "best_checkpoint.pth"
-                    best_path.parent.mkdir(parents=True, exist_ok=True)
-                    utils.save_on_master(
-                        {
-                            "model": get_requires_grad_dict(model_without_ddp),
-                        },
-                        best_path,
-                    )
-
-                print(
-                    f"PI accuracy on dev set: {dev_stats['top1_acc_pi']:.2f}"
-                )
-                print(f"Max PI accuracy: {max_accuracy:.2f}")
 
             log_stats = {
                 **{f"train_{k}": v for k, v in train_stats.items()},
@@ -513,18 +492,6 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
             }
         )
 
-    if args.dataset == "CSL_Daily":
-        tgt_pres = [
-            " ".join(list(r.replace(" ", "").replace("\n", ""))) if task == "SLT" else r
-            for r, task in zip(tgt_pres, tasks)
-        ]
-        tgt_refs = [
-            " ".join(list(r.replace("，", ",").replace("？", "?").replace(" ", "")))
-            if task == "SLT"
-            else r
-            for r, task in zip(tgt_refs, tasks)
-        ]
-
     if "SLT" in args.tasks:
         bleu_dict, rouge_score = translation_performance(tgt_refs, tgt_pres)
 
@@ -566,25 +533,6 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                 }
             )
 
-    if "ISLR" in args.tasks:
-        top1_acc_pi, top1_acc_pc = islr_performance(tgt_refs, tgt_pres)
-        metric_logger.meters["top1_acc_pi"].update(top1_acc_pi)
-        metric_logger.meters["top1_acc_pc"].update(top1_acc_pc)
-
-        print(
-            f"ISLR results\n"
-            f"Top-1 Acc (P-I): {top1_acc_pi:.2f}%\n"
-            f"Top-1 Acc (P-C): {top1_acc_pc:.2f}%"
-        )
-
-        if utils.is_main_process():
-            wandb.log(
-                {
-                    f"{phase}/top1_acc_pi": top1_acc_pi,
-                    f"{phase}/top1_acc_pc": top1_acc_pc,
-                }
-            )
-
     if utils.is_main_process() and utils.get_world_size() == 1 and args.eval:
         with open(args.output_dir + f"/{phase}_tmp_pres.txt", "w") as f:
             for pred in tgt_pres:
@@ -607,22 +555,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser("Uni-Sign scripts", parents=[get_args_parser()])
 
     parser.add_argument("--config", default="", type=str, help="path to a YAML config file")
+    parser.add_argument('--csv-dir', default="/home/onursefa/Desktop/dataops/split" , type=str, help='dir holding the csv annotation files')
+    parser.add_argument('--pose-dir', default="/media/onursefa/b5fc8c03-7555-4869-804d-185d711b2219/datasets/BUTID_Mediapipe" , type=str, help='dir holding the pose h5 files')
     parser.add_argument(
         "--online_data_loading",
         action="store_true",
         help="whether to load pose and vq features on-the-fly during training/evaluation; set to false to pre-extract and save all features to disk before training (not recommended due to large storage requirements)",
     )
     parser.add_argument(
-        "--start_pad",
-        default=3,
+        "--start-pad",
+        default=16,
         type=int,
-        help="seconds before the start timestamp of a sample to include in the pose and vq features",
+        help="frames before the start timestamp of a sample to include in the pose and vq features",
     )
     parser.add_argument(
-        "--end_pad",
-        default=3,
+        "--end-pad",
+        default=32,
         type=int,
-        help="seconds after the end timestamp of a sample to include in the pose and vq features",
+        help="frames after the end timestamp of a sample to include in the pose and vq features",
     )
     parser.add_argument(
         "--max_open_h5",

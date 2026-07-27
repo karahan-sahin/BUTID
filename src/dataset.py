@@ -799,22 +799,21 @@ class RTMDatasetForPretraining(BaseDataset):
 
 class NewDataset(BaseDataset):
     def __init__(self,
-                 csv_path,
+                 csv_dir,
                  pose_dir,
                  args,
                  phase,
-                 min_len=0,
-                 max_len=None,
+                 not_use_short=False
                  ):
         super().__init__()
 
         self.args = args
         self.phase = phase
-        self.min_len = min_len
-        self.max_len = max_len
 
-        self.raw_data = pd.read_csv(csv_path)
-        self.raw_data = self.raw_data[self.raw_data['end_frame']-self.raw_data['start_frame']>=self.min_len]
+        self.raw_data = pd.read_csv(os.path.join(csv_dir, self.phase + ".csv"))
+        self.raw_data = self.raw_data[self.raw_data['valid'] == True]
+        if not_use_short:
+            self.raw_data = self.raw_data[self.raw_data['is_short_text'] == False]
         self.len = self.raw_data.shape[0]
         self.raw_data = self.raw_data.to_dict(orient="records")
 
@@ -831,8 +830,6 @@ class NewDataset(BaseDataset):
         self._h5_cache = {}
         self._h5_cache_order = []
         self._max_open_h5 = getattr(args, "max_open_h5", 8)
-
-        print('a')
 
     def _get_h5(self, video_id):
         path = os.path.join(self.pose_dir, f"{video_id}.h5")
@@ -876,8 +873,9 @@ class NewDataset(BaseDataset):
     def __str__(self):
         return f"#total {self.len}"
 
+    TARGET_FPS = 25.0
 
-    def load_pose(self, video_id, start, end):
+    def load_pose(self, video_id, start, end, fps):
         h5f = self._get_h5(video_id)
         if h5f is None:
             print(f"Pose file for {video_id} does not exist.")
@@ -887,13 +885,27 @@ class NewDataset(BaseDataset):
             print(f"'keypoints' group missing in {video_id}.")
             return None
 
-        pose = []
-        start = max(0, int(start) - int(self.start_pad * 25))
-        end = int(end) + int(self.end_pad * 25)
+        # start/end/pads come in as native-fps frame indices; the pads are
+        # expressed in target-fps (25) frame counts, so scale them up before
+        # applying, then subsample the native range back down to ~25fps.
+        fps_ratio = fps / self.TARGET_FPS
+        start_pad = round(self.start_pad * fps_ratio)
+        end_pad = round(self.end_pad * fps_ratio)
+
+        start = max(0, start - start_pad)
+        end = end + end_pad
 
         keypoints_grp = h5f["keypoints"]
 
-        for frame in range(start, end):
+        pose = []
+        num_native_frames = end - start
+        num_target_frames = max(1, round(num_native_frames / fps_ratio))
+
+        for i in range(num_target_frames):
+            frame = start + round(i * fps_ratio)
+            if frame >= end:
+                break
+
             frame_grp = keypoints_grp.get(f"frame_{frame:04d}")
             if frame_grp is None:
                 continue
@@ -910,11 +922,6 @@ class NewDataset(BaseDataset):
         if len(pose) == 0:
             return None
 
-        # Keep temporal order
-        if len(pose) > self.max_len:
-            idx = sorted(random.sample(range(len(pose)), self.max_len))
-            pose = [pose[i] for i in idx]
-
         return pose
 
     def __getitem__(self, index):
@@ -924,13 +931,13 @@ class NewDataset(BaseDataset):
 
         key = sample["index"]
         video_id = sample["video"]
-        text = sample["text"]
+        text = sample["processed_text"]
 
         TIMEOUT = getattr(self.args, "io_timeout", 30)  # seconds
 
         try:
             pose_sample = run_with_timeout(self.load_pose, TIMEOUT,
-                                           video_id, sample['start_frame'], sample['end_frame'])
+                                           video_id, sample['start_frame'], sample['end_frame'], sample['fps'])
         except TimeoutException:
             print(f"[TIMEOUT] Skipping sample {key}")
             return key, None, None, text, None, task
