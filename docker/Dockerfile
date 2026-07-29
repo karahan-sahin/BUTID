@@ -20,8 +20,11 @@ ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Ubuntu 22.04's default python3 is already 3.10.12, matching the .venv.
+# python3.10-dev provides Python.h, needed by deepspeed's op builder to
+# JIT-compile its C++ extensions at runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10 \
+    python3.10-dev \
     python3-pip \
     build-essential \
     libaio-dev \
