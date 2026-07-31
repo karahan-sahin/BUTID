@@ -7,10 +7,12 @@ __pycache__/
 *.sif
 # C extensions
 *.so
+*.csv#
 
 out/
 debug_viz/
 wandb/
+slurm/logs/
 
 # Distribution / packaging
 .Python
