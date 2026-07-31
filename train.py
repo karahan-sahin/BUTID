@@ -93,15 +93,15 @@ def main(args):
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_data,
-        shuffle=True,
+        shuffle=False,
     )
     dev_sampler = torch.utils.data.distributed.DistributedSampler(
         dev_data,
-        shuffle=True,
+        shuffle=False,
     )
     test_sampler = torch.utils.data.distributed.DistributedSampler(
         test_data,
-        shuffle=True,
+        shuffle=False,
     )
 
     train_num_workers = args.num_workers

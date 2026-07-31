@@ -816,6 +816,8 @@ class NewDataset(BaseDataset):
             self.raw_data = self.raw_data[self.raw_data['is_short_text'] == False]
         self.len = self.raw_data.shape[0]
         self.raw_data = self.raw_data.to_dict(orient="records")
+        if self.phase == "train":
+            self.raw_data = self.raw_data[-300:]
 
         self.pose_dir = pose_dir
         self.tasks = args.tasks if isinstance(args.tasks, list) else [args.tasks]
