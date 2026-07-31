@@ -1,11 +1,12 @@
 #!/bin/sh
 
 #SBATCH --job-name="BUTID SLT"
-#SBATCH --partition=rtx5000
+#SBATCH --partition=cogvis-project
+#SBATCH --nodelist=aisurrey28
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
-#SBATCH --gres=gpu:4
-#SBATCH --mem-per-gpu=10G
+#SBATCH --ntasks-per-node=2
+#SBATCH --gres=gpu:2
+#SBATCH --mem-per-gpu=20G
 #SBATCH --time=03-00:00:00
 #SBATCH -o logs/slurm.%a.out
 #SBATCH -e logs/slurm.%a.err
@@ -21,9 +22,9 @@ apptainer exec --nv \
   --bind "${DATA_ROOT}:${DATA_ROOT}" \
   --pwd "${PROJECT_DIR}" \
   "${SIF_IMAGE}" \
-  deepspeed --include localhost:0,1,2,3 --master_port 29511 train.py \
-  --batch-size 32 \
-  --gradient-accumulation-steps 8 \
+  deepspeed --include localhost:0,1 --master_port 29511 train.py \
+  --batch-size 192 \
+  --gradient-accumulation-steps 4 \
   --epochs 30 \
   --opt AdamW \
   --lr 3e-4 \

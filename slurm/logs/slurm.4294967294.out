@@ -1,0 +1,278 @@
+CUDA_VISIBLE_DEVICES=0,1
+Warning: The cache directory for DeepSpeed Triton autotune, /mnt/fast/nobackup/users/bj134lq/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+[2026-07-31 18:13:40,293] [WARNING] [runner.py:232:fetch_hostfile] Unable to find hostfile, will proceed with training with local resources only.
+Detected VISIBLE_DEVICES=0,1 but ignoring it because one or several of --include/--exclude/--num_gpus/--num_nodes cl args were used. If you want to use CUDA_VISIBLE_DEVICES don't pass any of these arguments to deepspeed.
+[2026-07-31 18:13:40,293] [INFO] [runner.py:630:main] cmd = /usr/bin/python3.10 -u -m deepspeed.launcher.launch --world_info=eyJsb2NhbGhvc3QiOiBbMCwgMV19 --master_addr=127.0.0.1 --master_port=29511 --enable_each_rank_log=None --log_level=info train.py --batch-size 192 --gradient-accumulation-steps 4 --epochs 30 --opt AdamW --lr 3e-4 --quick_break 2048 --output_dir /mnt/fast/nobackup/scratch4weeks/bj134lq/data/train_output --dataset BUTID --tasks SLT --csv-dir /mnt/fast/nobackup/users/bj134lq/BUTID/data/split --pose-dir /mnt/fast/nobackup/scratch4weeks/bj134lq/data/BUTID_Mediapipe --start-pad 16 --end-pad 32
+Warning: The cache directory for DeepSpeed Triton autotune, /mnt/fast/nobackup/users/bj134lq/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+[2026-07-31 18:13:47,738] [INFO] [launch.py:155:main] 0 NCCL_VERSION=2.23.4-1
+[2026-07-31 18:13:47,739] [INFO] [launch.py:155:main] 0 NV_LIBNCCL_DEV_PACKAGE=libnccl-dev=2.23.4-1+cuda12.6
+[2026-07-31 18:13:47,739] [INFO] [launch.py:155:main] 0 NV_LIBNCCL_DEV_PACKAGE_NAME=libnccl-dev
+[2026-07-31 18:13:47,739] [INFO] [launch.py:155:main] 0 NV_LIBNCCL_DEV_PACKAGE_VERSION=2.23.4-1
+[2026-07-31 18:13:47,739] [INFO] [launch.py:155:main] 0 NV_LIBNCCL_PACKAGE=libnccl2=2.23.4-1+cuda12.6
+[2026-07-31 18:13:47,739] [INFO] [launch.py:155:main] 0 NV_LIBNCCL_PACKAGE_NAME=libnccl2
+[2026-07-31 18:13:47,739] [INFO] [launch.py:155:main] 0 NV_LIBNCCL_PACKAGE_VERSION=2.23.4-1
+[2026-07-31 18:13:47,739] [INFO] [launch.py:162:main] WORLD INFO DICT: {'localhost': [0, 1]}
+[2026-07-31 18:13:47,739] [INFO] [launch.py:168:main] nnodes=1, num_local_procs=2, node_rank=0
+[2026-07-31 18:13:47,739] [INFO] [launch.py:179:main] global_rank_mapping=defaultdict(<class 'list'>, {'localhost': [0, 1]})
+[2026-07-31 18:13:47,739] [INFO] [launch.py:180:main] dist_world_size=2
+[2026-07-31 18:13:47,739] [INFO] [launch.py:184:main] Setting CUDA_VISIBLE_DEVICES=0,1
+[2026-07-31 18:13:47,740] [INFO] [launch.py:272:main] process 650393 spawned with command: ['/usr/bin/python3.10', '-u', 'train.py', '--local_rank=0', '--batch-size', '192', '--gradient-accumulation-steps', '4', '--epochs', '30', '--opt', 'AdamW', '--lr', '3e-4', '--quick_break', '2048', '--output_dir', '/mnt/fast/nobackup/scratch4weeks/bj134lq/data/train_output', '--dataset', 'BUTID', '--tasks', 'SLT', '--csv-dir', '/mnt/fast/nobackup/users/bj134lq/BUTID/data/split', '--pose-dir', '/mnt/fast/nobackup/scratch4weeks/bj134lq/data/BUTID_Mediapipe', '--start-pad', '16', '--end-pad', '32']
+[2026-07-31 18:13:47,741] [INFO] [launch.py:272:main] process 650394 spawned with command: ['/usr/bin/python3.10', '-u', 'train.py', '--local_rank=1', '--batch-size', '192', '--gradient-accumulation-steps', '4', '--epochs', '30', '--opt', 'AdamW', '--lr', '3e-4', '--quick_break', '2048', '--output_dir', '/mnt/fast/nobackup/scratch4weeks/bj134lq/data/train_output', '--dataset', 'BUTID', '--tasks', 'SLT', '--csv-dir', '/mnt/fast/nobackup/users/bj134lq/BUTID/data/split', '--pose-dir', '/mnt/fast/nobackup/scratch4weeks/bj134lq/data/BUTID_Mediapipe', '--start-pad', '16', '--end-pad', '32']
+Warning: The cache directory for DeepSpeed Triton autotune, /mnt/fast/nobackup/users/bj134lq/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+Warning: The cache directory for DeepSpeed Triton autotune, /mnt/fast/nobackup/users/bj134lq/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+| distributed init (rank 1): env://
+| distributed init (rank 0): env://
+Namespace(batch_size=192, gradient_accumulation_steps=4, gradient_clipping=1.0, epochs=30, world_size=2, dist_url='env://', local_rank=0, hidden_dim=256, finetune='', opt='AdamW', opt_eps=1e-09, opt_betas=None, clip_grad=None, momentum=0.9, weight_decay=0.0001, sched='cosine', lr=0.0003, min_lr=1e-08, warmup_epochs=0, output_dir='/mnt/fast/nobackup/scratch4weeks/bj134lq/data/train_output', seed=42, eval=False, num_workers=8, pin_mem=True, offload=False, dtype='bf16', zero_stage=2, compute_fp32_loss=False, quick_break=2048, rgb_support=False, max_length=256, dataset='BUTID', task='SLT', label_smoothing=0.2, online_video='', modes=['body', 'right', 'left'], model_name_or_path='google/mt5-small', tasks=['SLT'], print_freq=10, debug=False, input_type='pose', config='', csv_dir='/mnt/fast/nobackup/users/bj134lq/BUTID/data/split', pose_dir='/mnt/fast/nobackup/scratch4weeks/bj134lq/data/BUTID_Mediapipe', online_data_loading=False, start_pad=16, end_pad=32, max_open_h5=8, input_mode='pose', rank=0, gpu=0, distributed=True, dist_backend='nccl')
+#total 3000
+#total 1000
+#total 1000
+Creating model...
+Selected improved mlp encoder
+number of params: 300.308866M
+Using deepspeed to train...
+Initializing deepspeed...
+<deepspeed.runtime.zero.stage_1_and_2.DeepSpeedZeroOptimizer object at 0x7f95e5f1c0d0>
+Start training for 30 epochs
+Epoch: [0/30]  [0/7]  eta: 0:06:09  lr: 0.000300  t_data: 49.338  t_fwd: 2.142  t_bwd: 1.152  t_step: 0.000  loss: 29.2500 (29.2500)  time: 52.7849  data: 49.3376  max mem: 29397
+Epoch: [0/30]  [5/7]  eta: 0:00:18  lr: 0.000300  t_data: 8.225  t_fwd: 0.533  t_bwd: 0.393  t_step: 0.098  loss: 28.0000 (27.8542)  time: 9.4420  data: 8.2231  max mem: 29446
+Epoch: [0/30]  [6/7]  eta: 0:00:08  lr: 0.000300  t_data: 7.051  t_fwd: 0.487  t_bwd: 0.368  t_step: 0.084  loss: 28.0000 (27.2679)  time: 8.1985  data: 7.0488  max mem: 29446
+Epoch: [0/30] Total time: 0:00:57 (8.2303 s / it)
+Averaged stats: lr: 0.000300  t_data: 7.051  t_fwd: 0.487  t_bwd: 0.368  t_step: 0.084  loss: 28.0000 (27.1339)
+save ckpt begin
+save ckpt finish
+DEV:  [0/6]  eta: 0:02:25  loss: 22.8750 (22.8750)  time: 24.2139  data: 0.0002  max mem: 29446
+DEV:  [5/6]  eta: 0:00:05  loss: 24.2500 (24.5417)  time: 5.8186  data: 0.0000  max mem: 29446
+DEV: Total time: 0:00:34 (5.8190 s / it)
+{'bleu1': 0.22396416573348263, 'bleu2': 0.03989151176516209, 'bleu3': 0.01874821567804473, 'bleu4': 0.011308486170688728}
+Rouge: 0.00
+
+--- Sample Predictions (dev) ---
+Ref: Yok, açamıyor! Allah'ım delireceğim! Bir şey oldu!
+Pred: <extra_id_0>
+---
+Ref: Ne duydun kızım?
+Pred: <extra_id_0>
+---
+Ref: Ne duydun kızım? Konuşsana!
+Pred: <extra_id_0>
+---
+Ref: Anne bir sakin olur musun?
+Pred: <extra_id_0> -
+---
+Ref: Ömer yanımda yoldayız, dedi.
+Pred: <extra_id_0>
+---
+Ref: Allah'ım korusun! Kötü bir şey
+Pred: <extra_id_0>
+---
+Ref: Olmaz öyle şey.
+Pred: <extra_id_0>
+---
+Ref: Ömer'in ne işi varsa onun yanında
+Pred: <extra_id_0>
+---
+Ref: Baba ne diyorsun sen, ha?
+Pred: <extra_id_0>
+---
+Ref: Başları dertte görmüyor musun?
+Pred: <extra_id_0>
+---
+Ref: Ya ne diyecektim?
+Pred: <extra_id_0>
+---
+Ref: Bak Ömer'in başına bir iş gelsin
+Pred: <extra_id_0>
+---
+Ref: Melek, al şunu iç.
+Pred: <extra_id_0> -
+---
+Ref: Bir şey oldu çocuklara, bir şey oldu!
+Pred: <extra_id_0>
+---
+Ref: Hele bir sakin olalım. Allah korusun.
+Pred: <extra_id_0> Turkish spoken language text
+---
+Ref: İlk önce bir öğrenelim başlarına ne geldi, ne oldu?
+Pred: <extra_id_0>
+---
+Ref: Neredeyse bulacaksın Ömer'imi, eve getireceksin Halil.
+Pred: <extra_id_0>
+---
+Ref: Anne, Defne'yle beraberlermiş. Bulacağız tamam.
+Pred: <extra_id_0>
+---
+Ref: Doğru diyor oğlun.
+Pred: <extra_id_0>
+---
+Ref: Murat, Defne aradı bizi şimdi. Ömer yanındaymış, kurtarmaya gitmiş.
+Pred: <extra_id_0>
+---
+## SLT results ##
+BLEU-1: 0.22%
+BLEU-2: 0.04%
+BLEU-3: 0.02%
+BLEU-4: 0.01%
+ROUGE: 0.00%
+
+TEST:  [0/6]  eta: 0:02:22  loss: 25.1250 (25.1250)  time: 23.7082  data: 0.0002  max mem: 29446
+TEST:  [5/6]  eta: 0:00:06  loss: 25.0000 (24.8542)  time: 6.2261  data: 0.0000  max mem: 29446
+TEST: Total time: 0:00:37 (6.2266 s / it)
+{'bleu1': 0.049794597286194446, 'bleu2': 0.018815068580120487, 'bleu3': 0.011362470400413043, 'bleu4': 0.007769182876777467}
+Rouge: 0.00
+
+--- Sample Predictions (test) ---
+Ref: Esat biliyor musun ben böyle hep hayalini
+Pred: <extra_id_0>
+---
+Ref: Yani hani filmlerde olur ya işte herkes mutludur, neşelidir falan.
+Pred: <extra_id_0>
+---
+Ref: babanla da böyle sofralara oturacağız inanıyorum ben.
+Pred: <extra_id_0> <extra_id_35> 
+---
+Ref: Yok, daha işi bitmedi ki benim.
+Pred: <extra_id_0>
+---
+Ref: Ben zaten yorgunken öyle hemen uyuyamıyorum.
+Pred: <extra_id_0>
+---
+Ref: Yan yana yatmamız gerekmiyor.
+Pred: <extra_id_0>
+---
+Ref: Ama olur mu ki öyle yani kızmaz mısın?
+Pred: <extra_id_0>
+---
+Ref: Kim o?
+Pred: <extra_id_0>
+---
+Ref: Allah Allah, tövbe estağfurullah.
+Pred: <extra_id_0> Turkish spoken language text
+---
+Ref: Niyeymiş, kim sandın beni?
+Pred: <extra_id_0>
+---
+Ref: Hayırdır, ne oluyor?
+Pred: <extra_id_0>
+---
+Ref: Aşk olsun baba, tamam kilitliyorum.
+Pred: <extra_id_0> Turkish spoken language
+---
+Ref: Tamam mı?
+Pred: <extra_id_0>
+---
+Ref: Neredesin?
+Pred: <extra_id_0>
+---
+Ref: Ne oldu, ne var?
+Pred: <extra_id_0>
+---
+Ref: Malum mutfağa da şey, istemedim girmek yani.
+Pred: <extra_id_0>
+---
+Ref: -Yakaladım, hırsızı yakaladım.
+Pred: <extra_id_0>
+---
+Ref: Şeklin şemalın düzelmiş.
+Pred: <extra_id_0>
+---
+Ref: Yalnız sevgilin de güzelmiş.
+Pred: <extra_id_0>
+---
+Ref: Nerede o, uyuyor mu?
+Pred: <extra_id_0>
+---
+## SLT results ##
+BLEU-1: 0.05%
+BLEU-2: 0.02%
+BLEU-3: 0.01%
+BLEU-4: 0.01%
+ROUGE: 0.00%
+
+save ckpt begin
+save ckpt finish
+BLEU-4 on dev set: 0.01
+Max BLEU-4: 0.01
+Epoch: [1/30]  [0/7]  eta: 0:05:53  lr: 0.000299  t_data: 49.720  t_fwd: 0.241  t_bwd: 0.237  t_step: 0.238  loss: 25.1250 (25.1250)  time: 50.5381  data: 49.7197  max mem: 30839
+Epoch: [1/30]  [5/7]  eta: 0:00:18  lr: 0.000298  t_data: 8.287  t_fwd: 0.211  t_bwd: 0.209  t_step: 0.258  loss: 22.2500 (22.7083)  time: 9.0046  data: 8.2867  max mem: 30839
+Epoch: [1/30]  [6/7]  eta: 0:00:07  lr: 0.000298  t_data: 7.104  t_fwd: 0.210  t_bwd: 0.210  t_step: 0.261  loss: 22.2500 (22.4464)  time: 7.8227  data: 7.1033  max mem: 30839
+Epoch: [1/30] Total time: 0:00:54 (7.8564 s / it)
+Averaged stats: lr: 0.000298  t_data: 7.104  t_fwd: 0.210  t_bwd: 0.210  t_step: 0.261  loss: 22.2500 (22.3214)
+save ckpt begin
+save ckpt finish
+DEV:  [0/6]  eta: 0:02:08  loss: 16.5000 (16.5000)  time: 21.3367  data: 0.0002  max mem: 30839
+DEV:  [5/6]  eta: 0:00:05  loss: 16.6250 (17.3333)  time: 5.7867  data: 0.0000  max mem: 30839
+DEV: Total time: 0:00:34 (5.7871 s / it)
+{'bleu1': 8.305316897024031, 'bleu2': 0.24302701754046913, 'bleu3': 0.06255853908667446, 'bleu4': 0.027927295000722312}
+Rouge: 0.00
+
+--- Sample Predictions (dev) ---
+Ref: Yok, açamıyor! Allah'ım delireceğim! Bir şey oldu!
+Pred: <extra_id_0>.
+---
+Ref: Ne duydun kızım?
+Pred: <extra_id_0>.
+---
+Ref: Ne duydun kızım? Konuşsana!
+Pred: <extra_id_0>.
+---
+Ref: Anne bir sakin olur musun?
+Pred: <extra_id_0>.
+---
+Ref: Ömer yanımda yoldayız, dedi.
+Pred: <extra_id_0>.
+---
+Ref: Allah'ım korusun! Kötü bir şey
+Pred: <extra_id_0>.
+---
+Ref: Olmaz öyle şey.
+Pred: <extra_id_0>.
+---
+Ref: Ömer'in ne işi varsa onun yanında
+Pred: <extra_id_0>.
+---
+Ref: Baba ne diyorsun sen, ha?
+Pred: <extra_id_0>.
+---
+Ref: Başları dertte görmüyor musun?
+Pred: <extra_id_0>.
+---
+Ref: Ya ne diyecektim?
+Pred: <extra_id_0>.
+---
+Ref: Bak Ömer'in başına bir iş gelsin
+Pred: <extra_id_0>.
+---
+Ref: Melek, al şunu iç.
+Pred: <extra_id_0>.
+---
+Ref: Bir şey oldu çocuklara, bir şey oldu!
+Pred: <extra_id_0>.
+---
+Ref: Hele bir sakin olalım. Allah korusun.
+Pred: <extra_id_0>.
+---
+Ref: İlk önce bir öğrenelim başlarına ne geldi, ne oldu?
+Pred: <extra_id_0>.
+---
+Ref: Neredeyse bulacaksın Ömer'imi, eve getireceksin Halil.
+Pred: <extra_id_0>.
+---
+Ref: Anne, Defne'yle beraberlermiş. Bulacağız tamam.
+Pred: <extra_id_0>.
+---
+Ref: Doğru diyor oğlun.
+Pred: <extra_id_0>.
+---
+Ref: Murat, Defne aradı bizi şimdi. Ömer yanındaymış, kurtarmaya gitmiş.
+Pred: <extra_id_0>.
+---
+## SLT results ##
+BLEU-1: 8.31%
+BLEU-2: 0.24%
+BLEU-3: 0.06%
+BLEU-4: 0.03%
+ROUGE: 0.00%
+
+TEST:  [0/6]  eta: 0:02:10  loss: 17.7500 (17.7500)  time: 21.7356  data: 0.0003  max mem: 30839
+TEST:  [5/6]  eta: 0:00:06  loss: 17.1250 (17.3750)  time: 6.0183  data: 0.0000  max mem: 30839
+TEST: Total time: 0:00:36 (6.0188 s / it)
