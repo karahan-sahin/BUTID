@@ -817,7 +817,9 @@ class NewDataset(BaseDataset):
         # self.len = self.raw_data.shape[0]
         self.raw_data = self.raw_data.to_dict(orient="records")
         if self.phase == "train":
-            self.raw_data = self.raw_data[-300:]
+            self.raw_data = self.raw_data[:3000]
+        else:
+            self.raw_data = self.raw_data[:1000]
         self.len = len(self.raw_data)
 
         self.pose_dir = pose_dir
@@ -936,7 +938,7 @@ class NewDataset(BaseDataset):
         video_id = sample["video"]
         text = sample["processed_text"]
 
-        TIMEOUT = getattr(self.args, "io_timeout", 30)  # seconds
+        TIMEOUT = getattr(self.args, "io_timeout", 60)  # seconds
 
         try:
             pose_sample = run_with_timeout(self.load_pose, TIMEOUT,
