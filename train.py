@@ -222,11 +222,10 @@ def main(args):
     max_accuracy = 0.0
 
     if args.eval:
-        if utils.is_main_process():
-            print("📄 dev result")
-            evaluate(args, dev_dataloader, model, model_without_ddp, phase="dev")
-            print("📄 test result")
-            evaluate(args, test_dataloader, model, model_without_ddp, phase="test")
+        print("📄 dev result")
+        evaluate(args, dev_dataloader, model, model_without_ddp, phase="dev")
+        print("📄 test result")
+        evaluate(args, test_dataloader, model, model_without_ddp, phase="test")
         return
 
     print(f"Start training for {args.epochs} epochs")
@@ -246,14 +245,14 @@ def main(args):
                 checkpoint_path,
             )
 
-        if utils.is_main_process():
-            dev_stats = evaluate(
-                args, dev_dataloader, model, model_without_ddp, phase="dev"
-            )
-            test_stats = evaluate(
-                args, test_dataloader, model, model_without_ddp, phase="test"
-            )
+        dev_stats = evaluate(
+            args, dev_dataloader, model, model_without_ddp, phase="dev"
+        )
+        test_stats = evaluate(
+            args, test_dataloader, model, model_without_ddp, phase="test"
+        )
 
+        if utils.is_main_process():
             if "SLT" in args.tasks:
                 if max_accuracy < dev_stats["bleu4"]:
                     max_accuracy = dev_stats["bleu4"]
@@ -493,6 +492,23 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
 
             step += 1
 
+    # Every rank only ran its own shard of dev/test data (via DistributedSampler),
+    # so gather predictions/refs/tasks and the loss sum from all ranks before
+    # computing corpus-level metrics. This keeps all ranks in the same
+    # DeepSpeed forward/generate calls in lock-step instead of only rank 0
+    # entering evaluate(), which previously made the other ranks race ahead
+    # to the next epoch and time out waiting on the training collectives.
+    if utils.get_world_size() > 1:
+        gathered = [None] * utils.get_world_size()
+        dist.all_gather_object(gathered, (tgt_pres, tgt_refs, tasks, eval_loss))
+        tgt_pres, tgt_refs, tasks, eval_loss = [], [], [], 0.0
+        for rank_pres, rank_refs, rank_tasks, rank_loss in gathered:
+            tgt_pres.extend(rank_pres)
+            tgt_refs.extend(rank_refs)
+            tasks.extend(rank_tasks)
+            eval_loss += rank_loss
+        eval_loss /= utils.get_world_size()
+
     if utils.is_main_process():
         wandb.log(
             {
@@ -541,7 +557,7 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
                 }
             )
 
-    if utils.is_main_process() and utils.get_world_size() == 1 and args.eval:
+    if utils.is_main_process() and args.eval:
         with open(args.output_dir + f"/{phase}_tmp_pres.txt", "w") as f:
             for pred in tgt_pres:
                 f.write(pred + "\n")
@@ -552,7 +568,9 @@ def evaluate(args, data_loader, model, model_without_ddp, phase):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
-    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+    stats["loss"] = eval_loss / max(1, len(data_loader))
+    return stats
 
 
 if __name__ == "__main__":
