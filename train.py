@@ -93,7 +93,7 @@ def main(args):
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_data,
-        shuffle=False,
+        shuffle=True,
     )
     dev_sampler = torch.utils.data.distributed.DistributedSampler(
         dev_data,
