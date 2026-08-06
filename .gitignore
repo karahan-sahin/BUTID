@@ -13,6 +13,8 @@ out/
 debug_viz/
 wandb/
 slurm/logs/
+data/example
+data/example_processed
 
 # Distribution / packaging
 .Python

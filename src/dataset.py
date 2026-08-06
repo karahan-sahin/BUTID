@@ -238,6 +238,138 @@ def crop_scale_3d(motion):
     return result, scale, [xs, ys, zs]
 
 
+# ---------------------------------------------------------------------------
+# converted pose (.pt) support — produced by converter.py
+#
+# The .h5 layout keeps one group per frame holding four tiny datasets, so
+# reading a clip costs O(frames * 4) HDF5 metadata lookups and stores every
+# landmark in float64. converter.py packs each video into one dense [T, J, 3]
+# tensor per part, pre-sliced to the joints the index lists above actually
+# select, so a clip read becomes a single gather over a memory-mapped tensor.
+# The helpers below are the reader side, shared with converter.py so the writer
+# and the reader cannot drift apart.
+# ---------------------------------------------------------------------------
+
+POSE_PT_FORMAT = "butid-pose-v1"
+TARGET_FPS = 25.0
+
+# part -> (h5 dataset name, joint indices kept, full mediapipe joint count)
+PART_SPEC = {
+    "body": ("pose_landmarks", BODY_IDXS_MP, 33),
+    "left": ("left_hand_landmarks", HAND_IDXS_MP, 21),
+    "right": ("right_hand_landmarks", HAND_IDXS_MP, 21),
+    "face": ("face_landmarks", FACE_IDXS_MP, 468),
+}
+PARTS = tuple(PART_SPEC)
+
+
+def open_pose_pt(path, mmap=True):
+    """Open a converted .pt. With mmap=True, tensors are paged in on demand."""
+    payload = torch.load(path, map_location="cpu", mmap=mmap, weights_only=True)
+
+    if payload.get("format") != POSE_PT_FORMAT:
+        raise ValueError(f"{path}: not a {POSE_PT_FORMAT} file")
+
+    for part, (_, idxs, _) in PART_SPEC.items():
+        if payload["joint_index"][part] != list(idxs):
+            raise ValueError(
+                f"{path}: '{part}' was converted with a different joint index set; "
+                "re-run converter.py after changing BODY_IDXS_MP / FACE_IDXS_MP"
+            )
+
+    return payload
+
+
+def window_frames(start, end, fps, start_pad=0, end_pad=0):
+    """Native-fps frame indices for one sample, subsampled to ~TARGET_FPS.
+
+    Mirrors the frame selection inlined in NewDataset.load_pose: start/end are
+    native-fps indices, while the pads are expressed in target-fps frame counts
+    and so are scaled up before being applied.
+    """
+    fps_ratio = fps / TARGET_FPS
+
+    start = max(0, int(start) - int(round(start_pad * fps_ratio)))
+    end = int(end) + int(round(end_pad * fps_ratio))
+
+    num_native_frames = end - start
+    num_target_frames = max(1, int(round(num_native_frames / fps_ratio)))
+
+    frames = []
+    for i in range(num_target_frames):
+        frame = start + int(round(i * fps_ratio))
+        if frame >= end:
+            break
+        frames.append(frame)
+
+    return frames
+
+
+def read_pose_window_pt(payload, frames):
+    """Pre-sliced [T, J, 3] float32 tensors for `frames`, or None if empty.
+
+    Frames missing from the source .h5 are dropped, matching the .h5 reader.
+    """
+    num_frames = int(payload["num_frames"])
+
+    if payload["contiguous"]:
+        first = int(payload["first_frame"])
+        rows = [f - first for f in frames if 0 <= f - first < num_frames]
+    else:
+        frame_ids = payload["frame_ids"]
+        wanted = torch.as_tensor(frames, dtype=torch.long)
+        pos = torch.searchsorted(frame_ids, wanted).clamp_(max=num_frames - 1)
+        rows = pos[frame_ids[pos] == wanted].tolist()
+
+    if not rows:
+        return None
+
+    index = torch.as_tensor(rows, dtype=torch.long)
+    return {part: payload["parts"][part][index].float() for part in PARTS}
+
+
+def _crop_scale_3d_t(motion):
+    """Vectorized crop_scale_3d over a [T, J, 3] tensor. Returns (result, scale)."""
+    flat = motion.reshape(-1, 3)
+    mins = flat.min(dim=0).values
+    maxs = flat.max(dim=0).values
+
+    scale = (maxs - mins).max().item()
+    if scale == 0:
+        return torch.zeros_like(motion), 0.0
+
+    offset = (mins + maxs - scale) / 2
+    result = (motion - offset) / scale
+    result = (result - 0.5) * 2
+    return result.clamp_(-1, 1), scale
+
+
+def load_part_mp_pre(parts):
+    """load_part_mp for converted tensors, without the per-frame Python loop.
+
+    `parts` holds [T, J, 3] tensors whose joints are already sliced and ordered
+    per PART_SPEC, so only the root-relative shift and the body-derived scale
+    are left to apply.
+    """
+    kps3d = {}
+    kps3d["body"], scale = _crop_scale_3d_t(parts["body"])
+
+    for part in ("left", "right", "face"):
+        kps = parts[part]
+        # wrist-relative for the hands, nose-tip-relative for the face
+        root = kps[:, :1, :] if part in ("left", "right") else kps[:, -1:, :]
+        result = kps - root
+
+        if scale == 0:
+            result = torch.zeros_like(result)
+        else:
+            result = (result / scale).clamp_(-1, 1)
+
+        kps3d[part] = result
+
+    return kps3d
+
+
 # build base dataset
 class BaseDataset(Dataset.Dataset):
     def collate_fn(self, batch):
@@ -259,7 +391,14 @@ class BaseDataset(Dataset.Dataset):
                 continue
 
             name_batch.append(name_sample)
-            pose_tmp.append(load_part_mp(pose_sample) if self.args.input_mode == "pose" else None)
+            # converted .pt samples arrive as a part -> tensor dict, already
+            # normalized in the worker; raw .h5 samples are still a list of
+            # per-frame landmark dicts and need load_part_mp here
+            pose_tmp.append(
+                (pose_sample if isinstance(pose_sample, dict) else load_part_mp(pose_sample))
+                if self.args.input_mode == "pose"
+                else None
+            )
             vq_tmp.append(vq_sample if self.args.input_mode == "vq" else None)
             tgt_batch.append(text)
             gloss_batch.append(gloss)
@@ -644,7 +783,7 @@ class BUTIDDataset(BaseDataset):
             pose.append(
                 {
                     "body": frame_grp["pose_landmarks"][:] if "pose_landmarks" in frame_grp else np.zeros((33, 3), dtype=np.float32),
-                    "left": frame_grp["left_hand_landmarks"][:] if "lefts_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
+                    "left": frame_grp["left_hand_landmarks"][:] if "left_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
                     "right": frame_grp["right_hand_landmarks"][:] if "right_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
                     "face": frame_grp["face_landmarks"][:] if "face_landmarks" in frame_grp else np.zeros((468, 3), dtype=np.float32),
                 }
@@ -803,8 +942,12 @@ class NewDataset(BaseDataset):
                  pose_dir,
                  args,
                  phase,
-                 not_use_short=False
+                 not_use_short=False,
+                 use_pt=False
                  ):
+        """use_pt=True reads the converted .pt files written by converter.py
+        instead of the raw .h5 files; `pose_dir` must then point at the
+        converted directory. The .h5 path is unchanged."""
         super().__init__()
 
         self.args = args
@@ -827,9 +970,34 @@ class NewDataset(BaseDataset):
         self.start_pad = getattr(args, "start_pad", 0)
         self.end_pad = getattr(args, "end_pad", 0)
 
+        self.use_pt = use_pt
+
         self._h5_cache = {}
         self._h5_cache_order = []
         self._max_open_h5 = getattr(args, "max_open_h5", 8)
+
+        # same lazy per-worker cache for the converted files; a cached entry is
+        # just a memory map, so open ones cost address space, not resident RAM
+        self._pt_cache = {}
+        self._pt_cache_order = []
+
+    def _get_pt(self, video_id):
+        path = os.path.join(self.pose_dir, f"{video_id}.pt")
+        if not os.path.exists(path):
+            return None
+
+        if video_id in self._pt_cache:
+            return self._pt_cache[video_id]
+
+        payload = open_pose_pt(path)
+        self._pt_cache[video_id] = payload
+        self._pt_cache_order.append(video_id)
+
+        if len(self._pt_cache_order) > self._max_open_h5:
+            old_vid = self._pt_cache_order.pop(0)
+            self._pt_cache.pop(old_vid, None)
+
+        return payload
 
     def _get_h5(self, video_id):
         path = os.path.join(self.pose_dir, f"{video_id}.h5")
@@ -866,6 +1034,8 @@ class NewDataset(BaseDataset):
 
     def __del__(self):
         self._close_h5_cache()
+        self._pt_cache = {}
+        self._pt_cache_order = []
 
     def __len__(self):
         return self.len
@@ -913,7 +1083,7 @@ class NewDataset(BaseDataset):
             pose.append(
                 {
                     "body": frame_grp["pose_landmarks"][:] if "pose_landmarks" in frame_grp else np.zeros((33, 3), dtype=np.float32),
-                    "left": frame_grp["left_hand_landmarks"][:] if "lefts_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
+                    "left": frame_grp["left_hand_landmarks"][:] if "left_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
                     "right": frame_grp["right_hand_landmarks"][:] if "right_hand_landmarks" in frame_grp else np.zeros((21, 3), dtype=np.float32),
                     "face": frame_grp["face_landmarks"][:] if "face_landmarks" in frame_grp else np.zeros((468, 3), dtype=np.float32),
                 }
@@ -923,6 +1093,26 @@ class NewDataset(BaseDataset):
             return None
 
         return pose
+
+    def load_pose_pt(self, video_id, start, end, fps):
+        """Same clip as load_pose, read from a converted .pt.
+
+        Returns the part -> tensor dict collate_fn wants, already normalized:
+        doing it here spreads the work across the DataLoader workers instead of
+        leaving it in the main process.
+        """
+        payload = self._get_pt(video_id)
+        if payload is None:
+            print(f"Converted pose file for {video_id} does not exist.")
+            return None
+
+        frames = window_frames(start, end, fps, self.start_pad, self.end_pad)
+
+        parts = read_pose_window_pt(payload, frames)
+        if parts is None:
+            return None
+
+        return load_part_mp_pre(parts)
 
     def __getitem__(self, index):
         raw_idx = self.list_key[index]
@@ -934,9 +1124,10 @@ class NewDataset(BaseDataset):
         text = sample["processed_text"]
 
         TIMEOUT = getattr(self.args, "io_timeout", 60)  # seconds
+        load_fn = self.load_pose_pt if self.use_pt else self.load_pose
 
         try:
-            pose_sample = run_with_timeout(self.load_pose, TIMEOUT,
+            pose_sample = run_with_timeout(load_fn, TIMEOUT,
                                            video_id, sample['start_frame'], sample['end_frame'], sample['fps'])
         except TimeoutException:
             print(f"[TIMEOUT] Skipping sample {key}")

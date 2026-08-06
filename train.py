@@ -70,21 +70,24 @@ def main(args):
         csv_dir=args.csv_dir,
         pose_dir=args.pose_dir,
         args=args,
-        phase='train'
+        phase='train',
+        use_pt=args.use_pt
     )
     dev_data = NewDataset(
         csv_dir=args.csv_dir,
         pose_dir=args.pose_dir,
         args=args,
         phase='val',
-        not_use_short=True
+        not_use_short=True,
+        use_pt=args.use_pt
     )
     test_data = NewDataset(
         csv_dir=args.csv_dir,
         pose_dir=args.pose_dir,
         args=args,
         phase='test',
-        not_use_short=True
+        not_use_short=True,
+        use_pt=args.use_pt
     )
 
     print(train_data)
@@ -606,6 +609,12 @@ if __name__ == "__main__":
         default=8,
         type=int,
         help="maximum number of lazily opened h5 files to keep per worker",
+    )
+    parser.add_argument(
+        "--use-pt",
+        action="store_true",
+        help="read the converted .pt pose files written by converter.py instead "
+        "of the raw .h5 files; --pose-dir must then point at the converted dir",
     )
     parser.add_argument(
         "--input_mode",
