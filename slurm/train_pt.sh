@@ -9,11 +9,12 @@
 
 #SBATCH --job-name="BUTID SLT pt"
 #SBATCH --partition=cogvis-project
-#SBATCH --nodelist=aisurrey36
+#SBATCH --nodelist=aisurrey28
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
-#SBATCH --mem-per-gpu=30G
+#SBATCH --cpus-per-gpu=8
+#SBATCH --mem-per-gpu=36G
 #SBATCH --time=03-00:00:00
 #SBATCH -o logs/slurm_pt.%a.out
 #SBATCH -e logs/slurm_pt.%a.err

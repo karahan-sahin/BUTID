@@ -215,6 +215,11 @@ def convert_dir(
         print("nothing to do for this shard")
         return
 
+    # create the output dir up front rather than lazily on the first save: a
+    # video can take minutes to read, and an unwritable --out-dir should fail
+    # now, not after the first one finishes
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     jobs = [(p, out_dir / f"{p.stem}.pt", dtype, overwrite) for p in h5_files]
 
     counts = {}
