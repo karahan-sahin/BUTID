@@ -1,0 +1,68 @@
+# Python runtime environment only — project code and data are bind-mounted
+# at runtime (see slurm/train_pt.sh). Mirrors the versions pinned in
+# requirements-lock.txt, generated from the working .venv (Python 3.10.12,
+# torch 2.13.0).
+#
+# This is the image for Blackwell GPUs on the HPC cluster, and exists because
+# neither of the other two Dockerfiles works there:
+#
+#   * Dockerfile (cu126) ships no sm_120 kernels, so a Blackwell card fails
+#     with "no kernel image is available for execution on the device".
+#   * Dockerfile.blackwell (cu130) is CUDA 13, which needs a 580+ driver. The
+#     cluster nodes run a CUDA 12.x driver, so it dies during init with
+#     "Error 803: system has unsupported display driver / cuda driver
+#     combination" before training ever starts.
+#
+# CUDA 12.9 threads the needle: Blackwell (sm_120) support landed in CUDA 12.8,
+# and 12.9 is still in the CUDA 12 major line, so it runs on a 12.x driver
+# under CUDA minor version compatibility.
+#
+# Note this is cu129 rather than cu128 because PyTorch never published
+# torch 2.13.0 for cu128 — that index stops at 2.11.0. Using cu128 would mean
+# downgrading torch and diverging from requirements-lock.txt; cu129 keeps the
+# pinned versions identical to the other two images.
+#
+# Uses a CUDA devel base (not just python:slim) because deepspeed's
+# op_builder calls installed_cuda_version() at `import deepspeed` time,
+# which requires nvcc/CUDA_HOME to exist even when no custom op is built.
+FROM nvidia/cuda:12.9.1-devel-ubuntu22.04
+
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Ubuntu 22.04's default python3 is already 3.10.12, matching the .venv.
+# python3.10-dev provides Python.h, needed by deepspeed's op builder to
+# JIT-compile its C++ extensions at runtime.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    build-essential \
+    libaio-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# torch/torchvision come from PyTorch's cu129 index explicitly — the default
+# PyPI index resolves torch to its newest CUDA variant (cu130), which is what
+# caused the driver mismatch above.
+RUN python3.10 -m pip install --no-cache-dir --upgrade pip && \
+    python3.10 -m pip install --no-cache-dir \
+      torch==2.13.0+cu129 torchvision==0.28.0+cu129 \
+      --index-url https://download.pytorch.org/whl/cu129
+
+# deepspeed comes from here (0.19.2). Installed as root without --user, so its
+# console script lands in /usr/local/bin, which is on apptainer's default PATH
+# — a --user install puts it in ~/.local/bin, which is not mounted when the
+# admin disables user bind control, and `deepspeed` is then not found.
+COPY requirements-lock.txt /tmp/requirements-lock.txt
+RUN python3.10 -m pip install --no-cache-dir -r /tmp/requirements-lock.txt && \
+    rm /tmp/requirements-lock.txt
+
+# Fail the build here rather than three days into a queued job: check that the
+# launcher training actually invokes is importable and on PATH.
+RUN python3.10 -c "import torch, deepspeed, h5py, transformers; \
+print('torch', torch.__version__, 'deepspeed', deepspeed.__version__)" && \
+    which deepspeed
+
+WORKDIR /workspace
