@@ -22,7 +22,7 @@
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
 PROJECT_DIR="/mnt/fast/nobackup/users/bj134lq/BUTID"
-SIF_IMAGE="${PROJECT_DIR}/docker/butid.sif"
+SIF_IMAGE="${PROJECT_DIR}/docker/butid_blackwell.sif"
 DATA_ROOT="/mnt/fast"
 
 apptainer exec --nv \
